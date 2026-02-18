@@ -82,7 +82,7 @@ def year_label(year_code: str) -> str:
 def metric_label(metric: str) -> str:
     """Strip statement prefix from metric key."""
     if "::" in metric:
-        return metric.split("::")[-1].strip()
+        return metric.split("::", 1)[1].strip()
     return metric
 
 

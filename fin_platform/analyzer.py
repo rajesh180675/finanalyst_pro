@@ -209,6 +209,49 @@ def _cagr(start: float, end: float, years: int) -> Optional[float]:
         return None
 
 
+def _pick_best_ni_reconciliation(
+    *,
+    revenue: Optional[float],
+    total_expenses: Optional[float],
+    tax_expense: Optional[float],
+    exceptional_items: Optional[float],
+    pbt: Optional[float],
+    ebit: Optional[float],
+    interest_expense: Optional[float],
+    net_income: Optional[float],
+) -> Optional[Tuple[float, float, str]]:
+    """
+    Build NI from multiple accounting identities and select the best-supported one.
+    This avoids false reconciliation warnings when sources have different subtotal
+    conventions (e.g. total expenses including taxes/exceptionals).
+    Returns (expected, gap, note).
+    """
+    if net_income is None:
+        return None
+
+    candidates: List[Tuple[float, str]] = []
+
+    if revenue is not None and total_expenses is not None and tax_expense is not None:
+        candidates.append((revenue - total_expenses - tax_expense, "Rev−Exp−Tax vs NI"))
+        if exceptional_items is not None:
+            candidates.append((revenue - total_expenses - tax_expense + exceptional_items, "Rev−Exp−Tax+Exc vs NI"))
+
+    if pbt is not None and tax_expense is not None:
+        candidates.append((pbt - tax_expense, "PBT−Tax vs NI"))
+        if exceptional_items is not None:
+            candidates.append((pbt - tax_expense + exceptional_items, "PBT−Tax+Exc vs NI"))
+
+    if ebit is not None and tax_expense is not None:
+        ie = interest_expense or 0.0
+        candidates.append((ebit - ie - tax_expense, "EBIT−Interest−Tax vs NI"))
+
+    if not candidates:
+        return None
+
+    expected, note = min(candidates, key=lambda c: abs(c[0] - net_income))
+    return expected, expected - net_income, note
+
+
 # ─── Company Type Detection ───────────────────────────────────────────────────
 
 def detect_company_type(
@@ -623,7 +666,7 @@ def penman_nissim_analysis(
             short_term_investments=st_inv, long_term_investments=lt_inv,
             financial_liabilities=fl, operating_liabilities=ol,
             net_operating_assets=noa, net_financial_assets=nfa, equity=te,
-            noa_plus_nfa_minus_equity=(noa + nfa - te) if (noa and nfa and te) else None,
+            noa_plus_nfa_minus_equity=(noa + nfa - te) if (noa is not None and nfa is not None and te is not None) else None,
             notes=notes,
         ))
 
@@ -766,6 +809,7 @@ def penman_nissim_analysis(
         # Balance sheet integrity checks
         ta_raw = g("Total Assets", y)
         ca_raw = g("Current Assets", y)
+        cl_raw = g("Current Liabilities", y)
         nca_raw = g("Non-Current Assets", y)
         tl_raw = g("Total Liabilities", y)
         eq_raw = g("Total Equity", y)
@@ -825,9 +869,9 @@ def penman_nissim_analysis(
                 "tax_assets": tax_assets_v,
                 "other_current_assets": other_ca_v,
                 "assets_held_for_sale": held_for_sale_v,
-                "current_liabilities": cl,
+                "current_liabilities": cl_raw,
                 "cl_component_sum": cl_component_sum,
-                "cl_gap": cl_component_sum - (cl or 0.0),
+                "cl_gap": cl_component_sum - (cl_raw or 0.0),
                 "accounts_payable": ap_v,
                 "short_term_debt": st_debt_v,
                 "provisions": prov_v,
@@ -967,24 +1011,40 @@ def penman_nissim_analysis(
     # ── IS reconciliation checks ──────────────────────────────────────────────
     income_stmt_checks: List[ReconciliationRow] = []
     for y in years:
-        rev = gv("Total Revenue", y) or gv("Revenue", y)
+        rev = gv("Total Revenue", y)
+        if rev is None:
+            rev = gv("Revenue", y)
         expenses = gv("Total Expenses", y)
         tax = gv("Tax Expense", y)
         ni = gv("Net Income", y)
         exc = gv("Exceptional Items", y)
-        if all(v is not None for v in [rev, expenses, tax, ni]):
-            assert rev is not None and expenses is not None and tax is not None and ni is not None
-            expected_a = rev - expenses - tax
-            expected_b = (rev - expenses - tax + exc) if exc is not None else expected_a
-            gap_a, gap_b = expected_a - ni, expected_b - ni
-            tol = max(1.0, abs(ni) * 0.02)
-            use_b = exc is not None and abs(gap_b) < abs(gap_a)
-            expected, gap = (expected_b, gap_b) if use_b else (expected_a, gap_a)
-            income_stmt_checks.append(ReconciliationRow(
-                year=y, expected=expected, actual=ni, gap=gap,
-                status="ok" if abs(gap) <= tol else "warn",
-                note="Rev−Exp−Tax+Exc vs NI" if use_b else "Rev−Exp−Tax vs NI",
-            ))
+        pbt = gv("Income Before Tax", y)
+        ebit = reformulated_is["EBIT"].get(y)
+        ie = gv("Interest Expense", y)
+
+        picked = _pick_best_ni_reconciliation(
+            revenue=rev,
+            total_expenses=expenses,
+            tax_expense=tax,
+            exceptional_items=exc,
+            pbt=pbt,
+            ebit=ebit,
+            interest_expense=ie,
+            net_income=ni,
+        )
+        if picked is None or ni is None:
+            continue
+
+        expected, gap, note = picked
+        tol = max(1.0, abs(ni) * 0.02)
+        income_stmt_checks.append(ReconciliationRow(
+            year=y,
+            expected=expected,
+            actual=ni,
+            gap=gap,
+            status="ok" if abs(gap) <= tol else "warn",
+            note=note,
+        ))
 
     # ── Data hygiene ──────────────────────────────────────────────────────────
     critical_metrics = [

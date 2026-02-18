@@ -30,7 +30,7 @@ import streamlit as st
 from fin_platform.types import (
     FinancialData, MappingDict, PNOptions,
 )
-from fin_platform.parser import parse_file, merge_financial_data
+from fin_platform.parser import parse_file, merge_financial_data, expand_uploaded_files
 from fin_platform.metric_patterns import (
     auto_map_metrics, get_all_targets, get_pattern_coverage,
     get_detailed_matches, get_targets_by_statement,
@@ -331,7 +331,7 @@ if st.session_state["step"] == "upload":
         st.markdown("""
         <div style='background:#eff6ff; border-radius:8px; padding:0.8rem 1rem; margin-bottom:1rem;
                     border-left:4px solid #1e40af; font-size:0.85rem; color:#1e40af;'>
-        <strong>Supported formats:</strong> Excel (.xlsx, .xls) • CSV (.csv) • HTML tables (Capitaline export)
+        <strong>Supported formats:</strong> Excel (.xlsx, .xls) • CSV (.csv) • HTML tables (Capitaline export) • ZIP bundles (.zip)
         <br><strong>Multi-sheet:</strong> P&L, Balance Sheet, Cash Flow in one file or multiple files
         </div>
         """, unsafe_allow_html=True)
@@ -345,7 +345,7 @@ if st.session_state["step"] == "upload":
         uploaded_files = st.file_uploader(
             "Upload financial statement files",
             accept_multiple_files=True,
-            type=["xlsx", "xls", "csv", "html", "htm"],
+            type=["xlsx", "xls", "csv", "html", "htm", "zip"],
             label_visibility="collapsed",
         )
 
@@ -355,12 +355,19 @@ if st.session_state["step"] == "upload":
                 for f in uploaded_files:
                     try:
                         file_bytes = f.read()
-                        file_data, file_years = parse_file(file_bytes, f.name)
-                        if file_data:
-                            datasets.append((file_data, f.name))
-                            st.success(f"✅ {f.name}: {len(file_data)} metrics, {len(file_years)} years")
-                        else:
-                            st.warning(f"⚠️ {f.name}: No data extracted")
+                        expanded_files = expand_uploaded_files(file_bytes, f.name)
+
+                        if f.name.lower().endswith(".zip") and not expanded_files:
+                            st.warning(f"⚠️ {f.name}: ZIP contains no supported statement files")
+
+                        for inner_name, inner_bytes in expanded_files:
+                            file_data, file_years = parse_file(inner_bytes, inner_name)
+                            display_name = inner_name if inner_name == f.name else f"{f.name} → {inner_name}"
+                            if file_data:
+                                datasets.append((file_data, display_name))
+                                st.success(f"✅ {display_name}: {len(file_data)} metrics, {len(file_years)} years")
+                            else:
+                                st.warning(f"⚠️ {display_name}: No data extracted")
                     except Exception as e:
                         st.error(f"❌ {f.name}: {e}")
 

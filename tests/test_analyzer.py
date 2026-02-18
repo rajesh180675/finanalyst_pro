@@ -424,6 +424,21 @@ class TestMatchMetric:
         matches = match_metric("")
         assert matches == []
 
+    def test_capex_purchased_fixed_assets_variant(self):
+        matches = match_metric("CashFlow::Purchased of Fixed Assets", "CashFlow")
+        assert matches
+        assert matches[0].target == "Capital Expenditure"
+
+    def test_operating_cashflow_used_in_operations_variant(self):
+        matches = match_metric("CashFlow::Cash Generated from/(used in) Operations", "CashFlow")
+        targets = [m.target for m in matches]
+        assert "Operating Cash Flow" in targets
+
+    def test_revenue_operations_net_variant(self):
+        matches = match_metric("ProfitLoss::Revenue From Operations(Net)", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Revenue" in targets
+
 
 class TestAutoMapMetrics:
     def test_maps_all_core_targets(self, sample_data, sample_mappings):

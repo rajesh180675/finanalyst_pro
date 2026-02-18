@@ -1,1 +1,0 @@
-# FinAnalyst Pro — Test Suite

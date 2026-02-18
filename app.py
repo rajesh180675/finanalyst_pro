@@ -320,342 +320,6 @@ st.markdown("""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STEP 1: UPLOAD
-# ═══════════════════════════════════════════════════════════════════════════════
-
-if st.session_state["step"] == "upload":
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.markdown("### 📁 Upload Financial Statements")
-        st.markdown("""
-        <div style='background:#eff6ff; border-radius:8px; padding:0.8rem 1rem; margin-bottom:1rem;
-                    border-left:4px solid #1e40af; font-size:0.85rem; color:#1e40af;'>
-        <strong>Supported formats:</strong> Excel (.xlsx, .xls) • CSV (.csv) • HTML tables (Capitaline export) • ZIP bundles (.zip)
-        <br><strong>Multi-sheet:</strong> P&L, Balance Sheet, Cash Flow in one file or multiple files
-        </div>
-        """, unsafe_allow_html=True)
-
-        company_name_input = st.text_input(
-            "Company Name",
-            placeholder="e.g. Reliance Industries Ltd",
-            help="Enter the company name for labeling the analysis"
-        )
-
-        uploaded_files = st.file_uploader(
-            "Upload financial statement files",
-            accept_multiple_files=True,
-            type=["xlsx", "xls", "csv", "html", "htm", "zip"],
-            label_visibility="collapsed",
-        )
-
-        if uploaded_files:
-            datasets = []
-            with st.spinner("Parsing files..."):
-                for f in uploaded_files:
-                    try:
-                        file_bytes = f.read()
-                        expanded_files = expand_uploaded_files(file_bytes, f.name)
-
-                        if f.name.lower().endswith(".zip") and not expanded_files:
-                            st.warning(f"⚠️ {f.name}: ZIP contains no supported statement files")
-
-                        for inner_name, inner_bytes in expanded_files:
-                            file_data, file_years = parse_file(inner_bytes, inner_name)
-                            display_name = inner_name if inner_name == f.name else f"{f.name} → {inner_name}"
-                            if file_data:
-                                datasets.append((file_data, display_name))
-                                st.success(f"✅ {display_name}: {len(file_data)} metrics, {len(file_years)} years")
-                            else:
-                                st.warning(f"⚠️ {display_name}: No data extracted")
-                    except Exception as e:
-                        st.error(f"❌ {f.name}: {e}")
-
-            if datasets:
-                merged_data, merged_years, debug_info = merge_financial_data(datasets)
-                if st.button("▶ Continue to Mapping", type="primary", use_container_width=True):
-                    st.session_state.update({
-                        "step": "mapping",
-                        "data": merged_data,
-                        "years": merged_years,
-                        "company_name": company_name_input or "Company",
-                        "mappings": None,
-                    })
-                    st.rerun()
-
-    with col2:
-        st.markdown("### 📋 What This Platform Does")
-        st.markdown("""
-        <div class='section-card' style='font-size:0.82rem;'>
-        <div style='margin-bottom:0.5rem;'><strong>🔬 Penman-Nissim Framework</strong><br>
-        Balance sheet & income statement reformulation, NOA/NFA/NOPAT computation</div>
-        <div style='margin-bottom:0.5rem;'><strong>📈 ReOI Valuation</strong><br>
-        V = NOA₀ + PV(Explicit ReOI) + PV(Terminal), 3 scenario analysis</div>
-        <div style='margin-bottom:0.5rem;'><strong>🎯 Accrual Quality</strong><br>
-        Shapley 3-factor NOPAT attribution, earnings quality tiers</div>
-        <div style='margin-bottom:0.5rem;'><strong>🛡️ Scoring Models</strong><br>
-        Altman Z-Score (distress) + Piotroski F-Score (quality)</div>
-        <div style='margin-bottom:0.5rem;'><strong>🏢 Smart Detection</strong><br>
-        Auto holding/investment company identification with adjusted PN framework</div>
-        <div><strong>📊 Capitaline Native</strong><br>
-        90+ pattern auto-mapper for Capitaline export formats</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown("### 🔧 Sample Data")
-        if st.button("Load Reliance Sample Data", use_container_width=True):
-            # Generate realistic sample data
-            sample_data = _generate_sample_data()
-            st.session_state.update({
-                "step": "mapping",
-                "data": sample_data,
-                "years": ["201903", "202003", "202103", "202203", "202303"],
-                "company_name": "Reliance Industries Ltd (Sample)",
-                "mappings": None,
-            })
-            st.rerun()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STEP 2: MAPPING EDITOR
-# ═══════════════════════════════════════════════════════════════════════════════
-
-elif st.session_state["step"] == "mapping":
-    data: FinancialData = st.session_state["data"]
-    years = st.session_state["years"]
-    company_name = st.session_state["company_name"]
-
-    st.markdown(f"### 🗺️ Metric Mapping — {company_name}")
-    st.markdown(f"""
-    <div style='background:#eff6ff; border-radius:8px; padding:0.7rem 1rem; margin-bottom:1rem;
-                font-size:0.82rem; color:#1e40af; border-left:4px solid #1e40af;'>
-    <strong>{len(data)}</strong> raw metrics detected across <strong>{len(years)}</strong> periods.
-    Auto-mapper has applied fuzzy pattern matching. Review mappings below and adjust if needed.
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Run auto-mapper
-    source_metrics = list(data.keys())
-    auto_mappings, unmapped = auto_map_metrics(source_metrics)
-    
-    if st.session_state.get("mappings") is None:
-        st.session_state["mappings"] = dict(auto_mappings)
-
-    current_mappings = st.session_state["mappings"]
-    coverage = get_pattern_coverage(current_mappings)
-    all_targets = [""] + sorted(get_all_targets())
-
-    col_stats = st.columns(4)
-    col_stats[0].metric("Total Metrics", len(data))
-    col_stats[1].metric("Auto-Mapped", len(current_mappings), f"{coverage['coverage']:.0f}% coverage")
-    col_stats[2].metric("Unmapped", len(unmapped))
-    col_stats[3].metric("Critical Missing", len(coverage["critical_missing"]))
-
-    if coverage["critical_missing"]:
-        st.warning(f"⚠️ Critical metrics missing: {', '.join(coverage['critical_missing'])}")
-
-    st.markdown("---")
-
-    # Filter
-    filter_col, btn_col = st.columns([3, 1])
-    with filter_col:
-        search_filter = st.text_input("Search metrics", placeholder="Filter by name...")
-    with btn_col:
-        show_unmapped_only = st.checkbox("Unmapped only", value=False)
-
-    # Render mapping table
-    filtered = {
-        src: tgt for src, tgt in current_mappings.items()
-        if (not search_filter or search_filter.lower() in src.lower())
-        and (not show_unmapped_only or tgt == "")
-    }
-    unmapped_filtered = [
-        s for s in unmapped
-        if (not search_filter or search_filter.lower() in s.lower())
-    ] if show_unmapped_only or not search_filter else []
-
-    # Mapped metrics editor
-    if filtered or not show_unmapped_only:
-        st.markdown("**✅ Auto-Mapped Metrics**")
-        changed = False
-        for src in list(current_mappings.keys()):
-            if search_filter and search_filter.lower() not in src.lower():
-                continue
-            col1, col2 = st.columns([2, 2])
-            with col1:
-                st.text(metric_label(src))
-            with col2:
-                current_tgt = current_mappings.get(src, "")
-                idx = all_targets.index(current_tgt) if current_tgt in all_targets else 0
-                new_tgt = st.selectbox(
-                    f"##tgt_{src}", all_targets, index=idx, key=f"map_{src}",
-                    label_visibility="collapsed"
-                )
-                if new_tgt != current_tgt:
-                    if new_tgt == "":
-                        del current_mappings[src]
-                    else:
-                        # Remove existing mapping to same target
-                        to_remove = [k for k, v in current_mappings.items() if v == new_tgt and k != src]
-                        for k in to_remove: del current_mappings[k]
-                        current_mappings[src] = new_tgt
-                    changed = True
-
-    # Unmapped metrics
-    if unmapped:
-        with st.expander(f"🔴 Unmapped Metrics ({len(unmapped)})"):
-            for src in unmapped:
-                if search_filter and search_filter.lower() not in src.lower():
-                    continue
-                col1, col2 = st.columns([2, 2])
-                with col1:
-                    st.text(metric_label(src))
-                with col2:
-                    new_tgt = st.selectbox(
-                        f"##tgt_{src}", all_targets, index=0, key=f"map_u_{src}",
-                        label_visibility="collapsed"
-                    )
-                    if new_tgt:
-                        current_mappings[src] = new_tgt
-                        unmapped.remove(src) if src in unmapped else None
-
-    st.markdown("---")
-    col_btn1, col_btn2 = st.columns([1, 3])
-    with col_btn1:
-        if st.button("← Back to Upload"):
-            st.session_state["step"] = "upload"
-            st.rerun()
-    with col_btn2:
-        if st.button("▶ Run Analysis", type="primary", use_container_width=True):
-            st.session_state["mappings"] = current_mappings
-            st.session_state["step"] = "dashboard"
-            st.rerun()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# STEP 3: DASHBOARD
-# ═══════════════════════════════════════════════════════════════════════════════
-
-elif st.session_state["step"] == "dashboard":
-    data: FinancialData = st.session_state["data"]
-    mappings: MappingDict = st.session_state["mappings"]
-    company_name: str = st.session_state["company_name"]
-    years: List[str] = get_years(data)
-
-    # ── Build results ─────────────────────────────────────────────────────────
-    @st.cache_data(ttl=60)
-    def _run_analysis(_data_key: str, _map_key: str):
-        return analyze_financials(data, mappings)
-
-    @st.cache_data(ttl=60)
-    def _run_pn(_data_key: str, _map_key: str, r: float, g: float, n: int, meth: str, strict: bool, mode: str):
-        return penman_nissim_analysis(data, mappings, PNOptions(
-            strict_mode=strict,
-            classification_mode=mode,  # type: ignore
-            cost_of_capital=r / 100,
-            terminal_growth=g / 100,
-            forecast_years=n,
-            forecast_method=meth,  # type: ignore
-        ))
-
-    @st.cache_data(ttl=60)
-    def _run_scoring(_data_key: str, _map_key: str):
-        return calculate_scores(data, mappings)
-
-    _data_key = str(id(data))
-    _map_key = str(sorted(mappings.items()))
-
-    analysis = _run_analysis(_data_key, _map_key)
-    pn_result = _run_pn(
-        _data_key, _map_key,
-        st.session_state["pn_cost_of_capital"],
-        st.session_state["pn_terminal_growth"],
-        st.session_state["pn_forecast_years"],
-        st.session_state["pn_forecast_method"],
-        st.session_state["pn_strict_mode"],
-        st.session_state["pn_classification_mode"],
-    )
-    scoring = _run_scoring(_data_key, _map_key)
-
-    # ── Company header ────────────────────────────────────────────────────────
-    col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(5)
-    col_h1.metric("Company", company_name[:20] + "…" if len(company_name) > 20 else company_name)
-    col_h2.metric("Metrics", analysis.summary.total_metrics)
-    col_h3.metric("Years", f"{analysis.summary.years_covered} ({analysis.summary.year_range})")
-    col_h4.metric("Data Quality", f"{analysis.summary.completeness:.0f}%")
-    col_h5.metric("Mapped", len(mappings))
-
-    st.markdown("---")
-
-    # ── Tabs ──────────────────────────────────────────────────────────────────
-    tabs = st.tabs([
-        "🏠 Overview", "📐 Penman-Nissim", "📊 Ratios", "📈 Trends",
-        "🛡️ Scoring", "💰 Valuation", "💵 FCF & Value Drivers",
-        "🗺️ Mappings", "🔍 Data Explorer", "🐛 Debug",
-    ])
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 1: OVERVIEW
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[0]:
-        _render_overview(analysis, pn_result, scoring, years, data, mappings)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 2: PENMAN-NISSIM
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[1]:
-        _render_penman_nissim(pn_result, years)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 3: RATIOS
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[2]:
-        _render_ratios(analysis, pn_result, years)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 4: TRENDS
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[3]:
-        _render_trends(analysis, years)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 5: SCORING
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[4]:
-        _render_scoring(scoring, years)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 6: VALUATION
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[5]:
-        _render_valuation(pn_result, years)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 7: FCF & VALUE DRIVERS
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[6]:
-        _render_fcf(pn_result, years)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 8: MAPPINGS
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[7]:
-        _render_mappings(data, mappings, years)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 9: DATA EXPLORER
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[8]:
-        _render_data_explorer(data, years)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 10: DEBUG
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[9]:
-        _render_debug(pn_result, analysis)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # TAB RENDER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1966,3 +1630,343 @@ def _generate_sample_data() -> FinancialData:
         s("CashFlow::Cash and Cash Equivalents at Beginning of the year", cash[max(0, i - 1)])
 
     return data
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STEP 1: UPLOAD
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if st.session_state["step"] == "upload":
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.markdown("### 📁 Upload Financial Statements")
+        st.markdown("""
+        <div style='background:#eff6ff; border-radius:8px; padding:0.8rem 1rem; margin-bottom:1rem;
+                    border-left:4px solid #1e40af; font-size:0.85rem; color:#1e40af;'>
+        <strong>Supported formats:</strong> Excel (.xlsx, .xls) • CSV (.csv) • HTML tables (Capitaline export) • ZIP bundles (.zip)
+        <br><strong>Multi-sheet:</strong> P&L, Balance Sheet, Cash Flow in one file or multiple files
+        </div>
+        """, unsafe_allow_html=True)
+
+        company_name_input = st.text_input(
+            "Company Name",
+            placeholder="e.g. Reliance Industries Ltd",
+            help="Enter the company name for labeling the analysis"
+        )
+
+        uploaded_files = st.file_uploader(
+            "Upload financial statement files",
+            accept_multiple_files=True,
+            type=["xlsx", "xls", "csv", "html", "htm", "zip"],
+            label_visibility="collapsed",
+        )
+
+        if uploaded_files:
+            datasets = []
+            with st.spinner("Parsing files..."):
+                for f in uploaded_files:
+                    try:
+                        file_bytes = f.read()
+                        expanded_files = expand_uploaded_files(file_bytes, f.name)
+
+                        if f.name.lower().endswith(".zip") and not expanded_files:
+                            st.warning(f"⚠️ {f.name}: ZIP contains no supported statement files")
+
+                        for inner_name, inner_bytes in expanded_files:
+                            file_data, file_years = parse_file(inner_bytes, inner_name)
+                            display_name = inner_name if inner_name == f.name else f"{f.name} → {inner_name}"
+                            if file_data:
+                                datasets.append((file_data, display_name))
+                                st.success(f"✅ {display_name}: {len(file_data)} metrics, {len(file_years)} years")
+                            else:
+                                st.warning(f"⚠️ {display_name}: No data extracted")
+                    except Exception as e:
+                        st.error(f"❌ {f.name}: {e}")
+
+            if datasets:
+                merged_data, merged_years, debug_info = merge_financial_data(datasets)
+                if st.button("▶ Continue to Mapping", type="primary", use_container_width=True):
+                    st.session_state.update({
+                        "step": "mapping",
+                        "data": merged_data,
+                        "years": merged_years,
+                        "company_name": company_name_input or "Company",
+                        "mappings": None,
+                    })
+                    st.rerun()
+
+    with col2:
+        st.markdown("### 📋 What This Platform Does")
+        st.markdown("""
+        <div class='section-card' style='font-size:0.82rem;'>
+        <div style='margin-bottom:0.5rem;'><strong>🔬 Penman-Nissim Framework</strong><br>
+        Balance sheet & income statement reformulation, NOA/NFA/NOPAT computation</div>
+        <div style='margin-bottom:0.5rem;'><strong>📈 ReOI Valuation</strong><br>
+        V = NOA₀ + PV(Explicit ReOI) + PV(Terminal), 3 scenario analysis</div>
+        <div style='margin-bottom:0.5rem;'><strong>🎯 Accrual Quality</strong><br>
+        Shapley 3-factor NOPAT attribution, earnings quality tiers</div>
+        <div style='margin-bottom:0.5rem;'><strong>🛡️ Scoring Models</strong><br>
+        Altman Z-Score (distress) + Piotroski F-Score (quality)</div>
+        <div style='margin-bottom:0.5rem;'><strong>🏢 Smart Detection</strong><br>
+        Auto holding/investment company identification with adjusted PN framework</div>
+        <div><strong>📊 Capitaline Native</strong><br>
+        90+ pattern auto-mapper for Capitaline export formats</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("### 🔧 Sample Data")
+        if st.button("Load Reliance Sample Data", use_container_width=True):
+            # Generate realistic sample data
+            sample_data = _generate_sample_data()
+            st.session_state.update({
+                "step": "mapping",
+                "data": sample_data,
+                "years": ["201903", "202003", "202103", "202203", "202303"],
+                "company_name": "Reliance Industries Ltd (Sample)",
+                "mappings": None,
+            })
+            st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STEP 2: MAPPING EDITOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+elif st.session_state["step"] == "mapping":
+    data: FinancialData = st.session_state["data"]
+    years = st.session_state["years"]
+    company_name = st.session_state["company_name"]
+
+    st.markdown(f"### 🗺️ Metric Mapping — {company_name}")
+    st.markdown(f"""
+    <div style='background:#eff6ff; border-radius:8px; padding:0.7rem 1rem; margin-bottom:1rem;
+                font-size:0.82rem; color:#1e40af; border-left:4px solid #1e40af;'>
+    <strong>{len(data)}</strong> raw metrics detected across <strong>{len(years)}</strong> periods.
+    Auto-mapper has applied fuzzy pattern matching. Review mappings below and adjust if needed.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Run auto-mapper
+    source_metrics = list(data.keys())
+    auto_mappings, unmapped = auto_map_metrics(source_metrics)
+    
+    if st.session_state.get("mappings") is None:
+        st.session_state["mappings"] = dict(auto_mappings)
+
+    current_mappings = st.session_state["mappings"]
+    coverage = get_pattern_coverage(current_mappings)
+    all_targets = [""] + sorted(get_all_targets())
+
+    col_stats = st.columns(4)
+    col_stats[0].metric("Total Metrics", len(data))
+    col_stats[1].metric("Auto-Mapped", len(current_mappings), f"{coverage['coverage']:.0f}% coverage")
+    col_stats[2].metric("Unmapped", len(unmapped))
+    col_stats[3].metric("Critical Missing", len(coverage["critical_missing"]))
+
+    if coverage["critical_missing"]:
+        st.warning(f"⚠️ Critical metrics missing: {', '.join(coverage['critical_missing'])}")
+
+    st.markdown("---")
+
+    # Filter
+    filter_col, btn_col = st.columns([3, 1])
+    with filter_col:
+        search_filter = st.text_input("Search metrics", placeholder="Filter by name...")
+    with btn_col:
+        show_unmapped_only = st.checkbox("Unmapped only", value=False)
+
+    # Render mapping table
+    filtered = {
+        src: tgt for src, tgt in current_mappings.items()
+        if (not search_filter or search_filter.lower() in src.lower())
+        and (not show_unmapped_only or tgt == "")
+    }
+    unmapped_filtered = [
+        s for s in unmapped
+        if (not search_filter or search_filter.lower() in s.lower())
+    ] if show_unmapped_only or not search_filter else []
+
+    # Mapped metrics editor
+    if filtered or not show_unmapped_only:
+        st.markdown("**✅ Auto-Mapped Metrics**")
+        changed = False
+        for src in list(current_mappings.keys()):
+            if search_filter and search_filter.lower() not in src.lower():
+                continue
+            col1, col2 = st.columns([2, 2])
+            with col1:
+                st.text(metric_label(src))
+            with col2:
+                current_tgt = current_mappings.get(src, "")
+                idx = all_targets.index(current_tgt) if current_tgt in all_targets else 0
+                new_tgt = st.selectbox(
+                    f"##tgt_{src}", all_targets, index=idx, key=f"map_{src}",
+                    label_visibility="collapsed"
+                )
+                if new_tgt != current_tgt:
+                    if new_tgt == "":
+                        del current_mappings[src]
+                    else:
+                        # Remove existing mapping to same target
+                        to_remove = [k for k, v in current_mappings.items() if v == new_tgt and k != src]
+                        for k in to_remove: del current_mappings[k]
+                        current_mappings[src] = new_tgt
+                    changed = True
+
+    # Unmapped metrics
+    if unmapped:
+        with st.expander(f"🔴 Unmapped Metrics ({len(unmapped)})"):
+            for src in unmapped:
+                if search_filter and search_filter.lower() not in src.lower():
+                    continue
+                col1, col2 = st.columns([2, 2])
+                with col1:
+                    st.text(metric_label(src))
+                with col2:
+                    new_tgt = st.selectbox(
+                        f"##tgt_{src}", all_targets, index=0, key=f"map_u_{src}",
+                        label_visibility="collapsed"
+                    )
+                    if new_tgt:
+                        current_mappings[src] = new_tgt
+                        unmapped.remove(src) if src in unmapped else None
+
+    st.markdown("---")
+    col_btn1, col_btn2 = st.columns([1, 3])
+    with col_btn1:
+        if st.button("← Back to Upload"):
+            st.session_state["step"] = "upload"
+            st.rerun()
+    with col_btn2:
+        if st.button("▶ Run Analysis", type="primary", use_container_width=True):
+            st.session_state["mappings"] = current_mappings
+            st.session_state["step"] = "dashboard"
+            st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STEP 3: DASHBOARD
+# ═══════════════════════════════════════════════════════════════════════════════
+# NOTE: keep this section below TAB RENDER FUNCTIONS so _render_* helpers
+# are defined before Streamlit executes dashboard blocks at import-time.
+
+elif st.session_state["step"] == "dashboard":
+    data: FinancialData = st.session_state["data"]
+    mappings: MappingDict = st.session_state["mappings"]
+    company_name: str = st.session_state["company_name"]
+    years: List[str] = get_years(data)
+
+    # ── Build results ─────────────────────────────────────────────────────────
+    @st.cache_data(ttl=60)
+    def _run_analysis(_data_key: str, _map_key: str):
+        return analyze_financials(data, mappings)
+
+    @st.cache_data(ttl=60)
+    def _run_pn(_data_key: str, _map_key: str, r: float, g: float, n: int, meth: str, strict: bool, mode: str):
+        return penman_nissim_analysis(data, mappings, PNOptions(
+            strict_mode=strict,
+            classification_mode=mode,  # type: ignore
+            cost_of_capital=r / 100,
+            terminal_growth=g / 100,
+            forecast_years=n,
+            forecast_method=meth,  # type: ignore
+        ))
+
+    @st.cache_data(ttl=60)
+    def _run_scoring(_data_key: str, _map_key: str):
+        return calculate_scores(data, mappings)
+
+    _data_key = str(id(data))
+    _map_key = str(sorted(mappings.items()))
+
+    analysis = _run_analysis(_data_key, _map_key)
+    pn_result = _run_pn(
+        _data_key, _map_key,
+        st.session_state["pn_cost_of_capital"],
+        st.session_state["pn_terminal_growth"],
+        st.session_state["pn_forecast_years"],
+        st.session_state["pn_forecast_method"],
+        st.session_state["pn_strict_mode"],
+        st.session_state["pn_classification_mode"],
+    )
+    scoring = _run_scoring(_data_key, _map_key)
+
+    # ── Company header ────────────────────────────────────────────────────────
+    col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(5)
+    col_h1.metric("Company", company_name[:20] + "…" if len(company_name) > 20 else company_name)
+    col_h2.metric("Metrics", analysis.summary.total_metrics)
+    col_h3.metric("Years", f"{analysis.summary.years_covered} ({analysis.summary.year_range})")
+    col_h4.metric("Data Quality", f"{analysis.summary.completeness:.0f}%")
+    col_h5.metric("Mapped", len(mappings))
+
+    st.markdown("---")
+
+    # ── Tabs ──────────────────────────────────────────────────────────────────
+    tabs = st.tabs([
+        "🏠 Overview", "📐 Penman-Nissim", "📊 Ratios", "📈 Trends",
+        "🛡️ Scoring", "💰 Valuation", "💵 FCF & Value Drivers",
+        "🗺️ Mappings", "🔍 Data Explorer", "🐛 Debug",
+    ])
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 1: OVERVIEW
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[0]:
+        _render_overview(analysis, pn_result, scoring, years, data, mappings)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 2: PENMAN-NISSIM
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[1]:
+        _render_penman_nissim(pn_result, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 3: RATIOS
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[2]:
+        _render_ratios(analysis, pn_result, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 4: TRENDS
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[3]:
+        _render_trends(analysis, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 5: SCORING
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[4]:
+        _render_scoring(scoring, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 6: VALUATION
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[5]:
+        _render_valuation(pn_result, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 7: FCF & VALUE DRIVERS
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[6]:
+        _render_fcf(pn_result, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 8: MAPPINGS
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[7]:
+        _render_mappings(data, mappings, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 9: DATA EXPLORER
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[8]:
+        _render_data_explorer(data, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 10: DEBUG
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[9]:
+        _render_debug(pn_result, analysis)
+
+

@@ -77,16 +77,16 @@ METRIC_DEFS: Dict[str, PatternDef] = {
     "Contingent Liabilities": PatternDef("BalanceSheet", ["contingent liabilities", "contingent liabilities and commitments"], priority=4),
 
     # ── Profit & Loss – Income ──────────────────────────────────────────────
-    "Revenue": PatternDef("ProfitLoss", ["revenue from operations", "revenue from operations(net)", "revenue from operations (net)", "net sales", "sales turnover", "total revenue from operations"], ["total revenue"], priority=10),
+    "Revenue": PatternDef("ProfitLoss", ["revenue from operations", "revenue from operations(net)", "revenue from operations (net)", "revenue from operations net", "net sales", "sales turnover", "total revenue from operations"], ["total revenue"], priority=10),
     "Total Revenue": PatternDef("ProfitLoss", ["total revenue", "total income"], priority=9),
     "Other Income": PatternDef("ProfitLoss", ["other income", "other operating income", "non-operating income"], ["total income", "operating income"], priority=6),
     "Exceptional Items": PatternDef("ProfitLoss", ["exceptional items", "extraordinary items", "exceptional and extraordinary items"], priority=6),
 
     # ── Profit & Loss – Expenses ────────────────────────────────────────────
     "Cost of Goods Sold": PatternDef("ProfitLoss", ["cost of goods sold", "cost of materials consumed", "raw material consumed", "purchases of stock-in-trade", "purchases of stock in trade", "cost of revenue"], priority=8),
-    "Employee Expenses": PatternDef("ProfitLoss", ["employee benefit expense", "employee expenses", "staff costs", "personnel expenses", "wages and salaries"], priority=7),
+    "Employee Expenses": PatternDef("ProfitLoss", ["employee benefit expense", "employee benefits", "employee expenses", "employee benefits salaries other staff cost", "staff costs", "personnel expenses", "wages and salaries"], priority=7),
     "Depreciation": PatternDef("ProfitLoss", ["depreciation", "amortization", "depreciation and amortisation", "depreciation and amortization", "d&a"], ["accumulated"], priority=7),
-    "Interest Expense": PatternDef("ProfitLoss", ["finance costs", "interest expense", "interest charges", "borrowing costs", "financial expenses"], priority=8),
+    "Interest Expense": PatternDef("ProfitLoss", ["finance costs", "interest expense", "interest charges", "borrowing costs", "financial expenses", "total interest expenses", "interest on bank borrowings", "interest on term fixed loans"], priority=8),
     "Total Expenses": PatternDef("ProfitLoss", ["total expenses", "total expenditure", "total costs and expenses"], priority=9),
     "Other Expenses": PatternDef("ProfitLoss", ["other expenses", "other operating expenses", "miscellaneous expenses"], ["total", "non-operating"], priority=5),
     "Changes in Inventory": PatternDef("ProfitLoss", ["changes in inventories", "change in inventories", "(increase)/decrease in inventories"], priority=5),
@@ -105,12 +105,12 @@ METRIC_DEFS: Dict[str, PatternDef] = {
     "Dividend": PatternDef("ProfitLoss", ["dividend paid", "dividend per share", "dividends"], ["dividend income", "dividend received"], priority=5),
 
     # ── Cash Flow Statement ──────────────────────────────────────────────────
-    "Operating Cash Flow": PatternDef("CashFlow", ["net cash from operating activities", "cash flow from operating activities", "cash generated from operations", "cash inflow from operating activities", "net cash generated from operations"], priority=10),
-    "Capital Expenditure": PatternDef("CashFlow", ["purchase of property plant and equipment", "capital expenditure", "capex", "purchase of fixed assets", "acquisition of property plant and equipment", "purchase of tangible assets", "payment for property plant and equipment"], priority=9),
+    "Operating Cash Flow": PatternDef("CashFlow", ["net cash from operating activities", "cash flow from operating activities", "cash generated from operations", "cash generated from used in operations", "cash inflow from operating activities", "net cash generated from operations"], priority=10),
+    "Capital Expenditure": PatternDef("CashFlow", ["purchase of property plant and equipment", "capital expenditure", "capex", "purchase of fixed assets", "purchased of fixed assets", "purchased of fixed asset", "capital expenditure capital wip", "acquisition of property plant and equipment", "purchase of tangible assets", "payment for property plant and equipment"], priority=9),
     "Investing Cash Flow": PatternDef("CashFlow", ["net cash from investing activities", "cash flow from investing activities", "net cash used in investing activities"], priority=8),
     "Financing Cash Flow": PatternDef("CashFlow", ["net cash from financing activities", "cash flow from financing activities", "net cash used in financing activities"], priority=8),
     "Free Cash Flow": PatternDef("CashFlow", ["free cash flow", "fcf"], priority=6),
-    "Net Change in Cash": PatternDef("CashFlow", ["net increase in cash", "net decrease in cash", "net inc/(dec) in cash", "net change in cash and cash equivalents", "net increase/(decrease) in cash and cash equivalents"], priority=7),
+    "Net Change in Cash": PatternDef("CashFlow", ["net increase in cash", "net decrease in cash", "net inc/(dec) in cash", "net inc dec in cash and cash equivalent", "net change in cash and cash equivalents", "net increase/(decrease) in cash and cash equivalents"], priority=7),
     "Cash Beginning": PatternDef("CashFlow", ["cash at beginning", "cash and cash equivalents at beginning", "opening cash", "cash at the beginning of the year", "cash and cash equivalents at beginning of the year"], priority=6),
     "Cash Ending": PatternDef("CashFlow", ["cash at end", "cash and cash equivalents at end", "closing cash", "cash at the end of the year", "cash and cash equivalents at end of the year", "cash and cash equivalents at end of the period"], priority=6),
     "Dividends Paid": PatternDef("CashFlow", ["dividends paid", "dividend paid to shareholders", "dividend paid (equity)"], priority=5),
@@ -156,6 +156,14 @@ def _fuzzy_match(a: str, b: str) -> float:
     return min((jaccard + word_bonus) * len_penalty, 1.0)
 
 
+def _normalize_text(s: str) -> str:
+    """Normalize labels for robust matching across punctuation/spacing variants."""
+    s = s.lower().strip()
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 # ─── Core Matching ────────────────────────────────────────────────────────────
 
 class MatchResult:
@@ -172,7 +180,7 @@ def match_metric(source: str, source_stmt: Optional[str] = None) -> List[MatchRe
     Return all candidate target matches for a source metric name.
     Applies statement gating, exclude-pattern filtering, and multi-level scoring.
     """
-    clean = source.split("::")[-1].strip().lower()
+    clean = _normalize_text(source.split("::")[-1])
     results: List[MatchResult] = []
 
     for target, defn in METRIC_DEFS.items():
@@ -181,12 +189,12 @@ def match_metric(source: str, source_stmt: Optional[str] = None) -> List[MatchRe
             continue
 
         # Exclude patterns
-        if any(ep.lower() in clean for ep in defn.exclude_patterns):
+        if any(_normalize_text(ep) in clean for ep in defn.exclude_patterns):
             continue
 
         best_score = 0.0
         for pattern in defn.patterns:
-            pat = pattern.lower()
+            pat = _normalize_text(pattern)
             if clean == pat:
                 score = 0.98
             elif pat in clean:

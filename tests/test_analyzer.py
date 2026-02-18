@@ -933,6 +933,20 @@ class TestPenmanNissimAnalysis:
         r = penman_nissim_analysis(sample_data, sample_mappings)
         assert len(r.diagnostics.pn_reconciliation) > 0
 
+    def test_balance_sheet_reconciliation_populated(self, sample_data, sample_mappings):
+        r = penman_nissim_analysis(sample_data, sample_mappings)
+        assert len(r.diagnostics.balance_sheet_reconciliation) > 0
+        for row in r.diagnostics.balance_sheet_reconciliation:
+            assert "assets_gap" in row
+            assert "liabilities_equity_gap" in row
+
+    def test_current_components_checks_populated(self, sample_data, sample_mappings):
+        r = penman_nissim_analysis(sample_data, sample_mappings)
+        assert len(r.diagnostics.current_components_checks) > 0
+        for row in r.diagnostics.current_components_checks:
+            assert "ca_gap" in row
+            assert "cl_gap" in row
+
     def test_classification_audit_all_years(self, sample_data, sample_mappings):
         r = penman_nissim_analysis(sample_data, sample_mappings)
         audit_years = {row.year for row in r.diagnostics.classification_audit}

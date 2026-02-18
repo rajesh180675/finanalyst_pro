@@ -1498,21 +1498,65 @@ def _render_debug(pn_result, analysis):
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-        # PN reconciliation
-        if diag.pn_reconciliation:
-            st.markdown("**⚖️ PN Balance Sheet Reconciliation (NOA + NFA = Equity)**")
-            rows = []
-            for r in diag.pn_reconciliation:
-                gap = r.get("gap", 0) or 0
-                rows.append({
-                    "Year": _yl(r["year"]),
-                    "NOA": format_indian_number(r.get("noa")),
-                    "NFA": format_indian_number(r.get("nfa")),
-                    "Equity": format_indian_number(r.get("equity")),
-                    "Gap": format_indian_number(gap),
-                    "OK?": "✅" if abs(gap) < 1 else "⚠️",
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        recon_tab, components_tab = st.tabs([
+            "⚖️ Balance Sheet Reconciliation",
+            "🧩 Current Assets & Liabilities Components",
+        ])
+
+        with recon_tab:
+            # PN reconciliation
+            if diag.pn_reconciliation:
+                st.markdown("**⚖️ PN Balance Sheet Reconciliation (NOA + NFA = Equity)**")
+                rows = []
+                for r in diag.pn_reconciliation:
+                    gap = r.get("gap", 0) or 0
+                    rows.append({
+                        "Year": _yl(r["year"]),
+                        "NOA": format_indian_number(r.get("noa")),
+                        "NFA": format_indian_number(r.get("nfa")),
+                        "Equity": format_indian_number(r.get("equity")),
+                        "Gap": format_indian_number(gap),
+                        "OK?": "✅" if abs(gap) < 1 else "⚠️",
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            if diag.balance_sheet_reconciliation:
+                st.markdown("**📘 Balance Sheet Integrity (CA+NCA vs TA, TL+EQ vs TA)**")
+                rows = []
+                for r in diag.balance_sheet_reconciliation:
+                    assets_gap = r.get("assets_gap", 0) or 0
+                    le_gap = r.get("liabilities_equity_gap", 0) or 0
+                    rows.append({
+                        "Year": _yl(r["year"]),
+                        "CA": format_indian_number(r.get("current_assets")),
+                        "NCA": format_indian_number(r.get("non_current_assets")),
+                        "TA": format_indian_number(r.get("total_assets")),
+                        "Assets Gap (CA+NCA−TA)": format_indian_number(assets_gap),
+                        "TL": format_indian_number(r.get("total_liabilities")),
+                        "EQ": format_indian_number(r.get("total_equity")),
+                        "L+E Gap (TL+EQ−TA)": format_indian_number(le_gap),
+                        "OK?": "✅" if abs(assets_gap) < 1 and abs(le_gap) < 1 else "⚠️",
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        with components_tab:
+            if diag.current_components_checks:
+                st.markdown("**🧪 Current Component Breakdown & Integrity Check**")
+                rows = []
+                for r in diag.current_components_checks:
+                    ca_gap = r.get("ca_gap", 0) or 0
+                    cl_gap = r.get("cl_gap", 0) or 0
+                    rows.append({
+                        "Year": _yl(r["year"]),
+                        "CA": format_indian_number(r.get("current_assets")),
+                        "ΣCA Components": format_indian_number(r.get("ca_component_sum")),
+                        "CA Gap": format_indian_number(ca_gap),
+                        "CL": format_indian_number(r.get("current_liabilities")),
+                        "ΣCL Components": format_indian_number(r.get("cl_component_sum")),
+                        "CL Gap": format_indian_number(cl_gap),
+                        "OK?": "✅" if abs(ca_gap) < 1 and abs(cl_gap) < 1 else "⚠️",
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
         # Ratio warnings
         if diag.ratio_warnings:

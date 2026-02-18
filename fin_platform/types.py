@@ -160,6 +160,8 @@ class PNDiagnostics:
     data_hygiene: List[DataHygieneIssue] = field(default_factory=list)
     assumptions: Dict[str, List[str]] = field(default_factory=dict)
     pn_reconciliation: List[Dict] = field(default_factory=list)
+    balance_sheet_reconciliation: List[Dict] = field(default_factory=list)
+    current_components_checks: List[Dict] = field(default_factory=list)
     classification_audit: List[PNClassificationAuditRow] = field(default_factory=list)
     ratio_warnings: List[Dict[str, str]] = field(default_factory=list)
 

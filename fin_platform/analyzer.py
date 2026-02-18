@@ -722,6 +722,8 @@ def penman_nissim_analysis(
     }
 
     pn_reconciliation: List[Dict] = []
+    balance_sheet_reconciliation: List[Dict] = []
+    current_components_checks: List[Dict] = []
 
     for i, y in enumerate(years):
         noa = reformulated_bs["Net Operating Assets"].get(y)
@@ -759,6 +761,80 @@ def penman_nissim_analysis(
             pn_reconciliation.append({
                 "year": y, "noa": noa, "nfa": nfa, "equity": ce,
                 "gap": noa + nfa - ce,
+            })
+
+        # Balance sheet integrity checks
+        ta_raw = g("Total Assets", y)
+        ca_raw = g("Current Assets", y)
+        nca_raw = g("Non-Current Assets", y)
+        tl_raw = g("Total Liabilities", y)
+        eq_raw = g("Total Equity", y)
+
+        if ta_raw is not None:
+            ca_nca_gap = ((ca_raw or 0.0) + (nca_raw or 0.0)) - ta_raw
+            l_e_gap = ((tl_raw or 0.0) + (eq_raw or 0.0)) - ta_raw
+            balance_sheet_reconciliation.append({
+                "year": y,
+                "total_assets": ta_raw,
+                "current_assets": ca_raw,
+                "non_current_assets": nca_raw,
+                "total_liabilities": tl_raw,
+                "total_equity": eq_raw,
+                "assets_gap": ca_nca_gap,
+                "liabilities_equity_gap": l_e_gap,
+            })
+
+            inv = g("Inventory", y) or 0.0
+            ar = g("Trade Receivables", y) or 0.0
+            cash_v = g("Cash and Cash Equivalents", y) or 0.0
+            bank_v = g("Bank Balances", y) or 0.0
+            st_inv_v = g("Short-term Investments", y) or 0.0
+            st_loans_v = g("Short-term Loans", y) or 0.0
+            other_st_fin_v = g("Other Short-term Financial Assets", y) or 0.0
+            tax_assets_v = g("Deferred Tax Assets", y) or 0.0
+            other_ca_v = g("Other Current Assets", y) or 0.0
+            held_for_sale_v = g("Assets Held for Sale", y) or 0.0
+
+            ap_v = g("Accounts Payable", y) or 0.0
+            st_debt_v = g("Short-term Debt", y) or 0.0
+            prov_v = g("Provisions", y) or 0.0
+            other_cl_v = g("Other Current Liabilities", y) or 0.0
+            tax_cl_v = g("Current Tax Liabilities", y) or 0.0
+            other_stl_v = g("Other Short-term Liabilities", y) or 0.0
+            liab_held_sale_v = g("Liabilities Held for Sale", y) or 0.0
+
+            ca_component_sum = (
+                inv + ar + cash_v + bank_v + st_inv_v + st_loans_v + other_st_fin_v
+                + tax_assets_v + other_ca_v + held_for_sale_v
+            )
+            cl_component_sum = (
+                ap_v + st_debt_v + prov_v + other_cl_v + tax_cl_v + other_stl_v + liab_held_sale_v
+            )
+            current_components_checks.append({
+                "year": y,
+                "current_assets": ca_raw,
+                "ca_component_sum": ca_component_sum,
+                "ca_gap": ca_component_sum - (ca_raw or 0.0),
+                "inventory": inv,
+                "trade_receivables": ar,
+                "cash": cash_v,
+                "bank_balances": bank_v,
+                "short_term_investments": st_inv_v,
+                "short_term_loans": st_loans_v,
+                "other_short_term_financial_assets": other_st_fin_v,
+                "tax_assets": tax_assets_v,
+                "other_current_assets": other_ca_v,
+                "assets_held_for_sale": held_for_sale_v,
+                "current_liabilities": cl,
+                "cl_component_sum": cl_component_sum,
+                "cl_gap": cl_component_sum - (cl or 0.0),
+                "accounts_payable": ap_v,
+                "short_term_debt": st_debt_v,
+                "provisions": prov_v,
+                "other_current_liabilities": other_cl_v,
+                "tax_current_liabilities": tax_cl_v,
+                "other_short_term_liabilities": other_stl_v,
+                "liabilities_held_for_sale": liab_held_sale_v,
             })
 
         # RNOA — numerically unstable when avg_noa ≈ 0
@@ -1333,6 +1409,8 @@ def penman_nissim_analysis(
         data_hygiene=data_hygiene,
         assumptions=assumptions,
         pn_reconciliation=pn_reconciliation,
+        balance_sheet_reconciliation=balance_sheet_reconciliation,
+        current_components_checks=current_components_checks,
         classification_audit=classification_audit,
         ratio_warnings=ratio_warnings,
     )

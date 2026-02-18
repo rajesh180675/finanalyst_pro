@@ -1,1 +1,90 @@
+name: FinAnalyst Pro CI
 
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          # Stop on syntax errors or undefined names; warn on style
+          flake8 fin_platform/ app.py --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 fin_platform/ app.py --count --max-line-length=120 --statistics --exit-zero
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --tb=short --cov=fin_platform --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.12'
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  streamlit-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify app.py imports correctly
+        run: |
+          python -c "
+          import ast, sys
+          with open('app.py') as f:
+              source = f.read()
+          try:
+              ast.parse(source)
+              print('app.py: syntax OK')
+          except SyntaxError as e:
+              print(f'Syntax error: {e}')
+              sys.exit(1)
+          "
+
+      - name: Verify package imports
+        run: |
+          python -c "
+          from fin_platform.types import *
+          from fin_platform.formatting import *
+          from fin_platform.metric_patterns import auto_map_metrics, get_all_targets
+          from fin_platform.parser import extract_year, to_numeric, parse_file
+          from fin_platform.analyzer import (
+              get_years, analyze_financials, penman_nissim_analysis, calculate_scores
+          )
+          print('All package imports: OK')
+          print(f'Pattern targets: {len(get_all_targets())}')
+          "

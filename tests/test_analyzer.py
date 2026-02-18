@@ -17,7 +17,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from fin_platform.parser import extract_year, to_numeric, classify_metric
+from fin_platform.parser import (
+    extract_year,
+    to_numeric,
+    classify_metric,
+    parse_file,
+    expand_uploaded_files,
+)
 from fin_platform.metric_patterns import (
     match_metric,
     auto_map_metrics,
@@ -312,6 +318,44 @@ class TestClassifyMetric:
 
     def test_inventory_bs(self):
         assert classify_metric("Inventories") == "BalanceSheet"
+
+
+class TestFileParsingExtensions:
+    def test_extract_year_fy_2digit(self):
+        assert extract_year("FY24") == "202403"
+
+    def test_parse_capitaline_html_saved_as_xls(self):
+        html = """
+        <html><body>
+        <table>
+            <tr><th>Particulars</th><th>Mar 2024</th><th>Mar 2023</th></tr>
+            <tr><td>Revenue from Operations</td><td>1,200</td><td>1,000</td></tr>
+            <tr><td>Profit After Tax</td><td>150</td><td>120</td></tr>
+        </table>
+        </body></html>
+        """.encode("utf-8")
+
+        data, years = parse_file(html, "ProfitLossINDAS_(5).xls")
+
+        assert "ProfitLoss::Revenue from Operations" in data
+        assert data["ProfitLoss::Revenue from Operations"]["202403"] == 1200.0
+        assert data["ProfitLoss::Profit After Tax"]["202303"] == 120.0
+        assert years == ["202303", "202403"]
+
+    def test_expand_uploaded_files_zip(self):
+        import io
+        import zipfile
+
+        mem = io.BytesIO()
+        with zipfile.ZipFile(mem, "w") as zf:
+            zf.writestr("CashFlow_(4).xls", "<html><table><tr><th>Particulars</th><th>FY24</th></tr><tr><td>Net Cash from Operating Activities</td><td>500</td></tr></table></html>")
+            zf.writestr("notes/readme.txt", "ignore")
+
+        files = expand_uploaded_files(mem.getvalue(), "capitaline_bundle.zip")
+
+        assert len(files) == 1
+        assert files[0][0] == "CashFlow_(4).xls"
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

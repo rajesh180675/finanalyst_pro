@@ -11,6 +11,7 @@ Year detection supports Indian FY formats (FY24, Mar 2024, 2024-25, etc.)
 from __future__ import annotations
 import re
 import io
+import zipfile
 from typing import Dict, List, Optional, Tuple, Any
 
 import pandas as pd
@@ -42,6 +43,13 @@ def extract_year(col_name: str) -> Optional[str]:
         if 1990 <= y <= 2099:
             return f"{y}03"
 
+    # FY24 / FY 24
+    m = re.search(r'FY\s*(\d{2})(?!\d)', s, re.IGNORECASE)
+    if m:
+        y = 2000 + int(m.group(1))
+        if 1990 <= y <= 2099:
+            return f"{y}03"
+
     # Mar 2024 / Mar-24 / Mar'24
     m = re.search(r"Mar(?:ch)?['\-\s]?(\d{2,4})", s, re.IGNORECASE)
     if m:
@@ -51,7 +59,7 @@ def extract_year(col_name: str) -> Optional[str]:
             return f"{yr}03"
 
     # 2024-25 or 2024/25
-    m = re.match(r'(\d{4})[-/](\d{2,4})', s)
+    m = re.search(r'(\d{4})\s*[-/]\s*(\d{2,4})', s)
     if m:
         y = int(m.group(1))
         if 1990 <= y <= 2099:
@@ -107,7 +115,7 @@ def classify_metric(text: str) -> str:
              'cost', 'ebit', 'ebitda', 'tax', 'interest', 'depreciation',
              'dividend', 'earning', 'margin', 'turnover']
     bs_kw = ['asset', 'liability', 'equity', 'capital', 'reserve',
-             'receivable', 'payable', 'inventory', 'borrowing', 'debt',
+             'receivable', 'payable', 'inventory', 'inventories', 'borrowing', 'debt',
              'investment', 'property', 'goodwill', 'cash', 'bank',
              'provision', 'intangible', 'net worth']
 
@@ -225,9 +233,8 @@ def _parse_sheet_df(df: pd.DataFrame, stmt: str) -> FinancialData:
 
 def _parse_html(content: bytes) -> FinancialData:
     """Parse Capitaline HTML export with multiple tables."""
-    try:
-        html = content.decode('utf-8', errors='replace')
-    except Exception:
+    html = _decode_text(content)
+    if not html:
         return {}
 
     soup = BeautifulSoup(html, 'lxml')
@@ -301,6 +308,25 @@ def _parse_html(content: bytes) -> FinancialData:
     return data
 
 
+def _decode_text(content: bytes) -> str:
+    """Decode bytes with fallbacks for legacy exports (utf-16/latin1/etc.)."""
+    for enc in ("utf-8", "utf-16", "utf-16le", "utf-16be", "latin1", "cp1252"):
+        try:
+            text = content.decode(enc)
+            if text:
+                return text
+        except Exception:
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
+def _looks_like_html(content: bytes) -> bool:
+    """Heuristic detection for HTML payloads saved with .xls extension."""
+    head = content[:4096]
+    low = head.lower().replace(b"\x00", b"")
+    return any(tok in low for tok in (b"<html", b"<table", b"<!doctype html", b"<tr", b"<td"))
+
+
 # ─── Main Parse Entry Point ───────────────────────────────────────────────────
 
 def parse_file(file_bytes: bytes, filename: str) -> Tuple[FinancialData, List[str]]:
@@ -312,6 +338,9 @@ def parse_file(file_bytes: bytes, filename: str) -> Tuple[FinancialData, List[st
     fn_lower = filename.lower()
 
     if fn_lower.endswith(('.htm', '.html')):
+        data = _parse_html(file_bytes)
+    elif fn_lower.endswith('.xls') and _looks_like_html(file_bytes):
+        # Capitaline commonly ships HTML tables with .xls extension.
         data = _parse_html(file_bytes)
     elif fn_lower.endswith('.csv'):
         try:
@@ -342,6 +371,8 @@ def _parse_excel(file_bytes: bytes, filename: str) -> FinancialData:
     """Parse all sheets of an Excel file."""
     merged: FinancialData = {}
     try:
+        if filename.lower().endswith('.xls') and _looks_like_html(file_bytes):
+            return _parse_html(file_bytes)
         xl = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl' if filename.lower().endswith('.xlsx') else 'xlrd')
         for sheet_name in xl.sheet_names:
             try:
@@ -365,6 +396,24 @@ def _parse_excel(file_bytes: bytes, filename: str) -> FinancialData:
         except Exception:
             pass
     return merged
+
+
+def expand_uploaded_files(file_bytes: bytes, filename: str) -> List[Tuple[str, bytes]]:
+    """Expand upload into parseable files, including .zip archives."""
+    fn_lower = filename.lower()
+    if not fn_lower.endswith(".zip"):
+        return [(filename, file_bytes)]
+
+    expanded: List[Tuple[str, bytes]] = []
+    with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            inner_name = info.filename
+            inner_lower = inner_name.lower()
+            if inner_lower.endswith((".xlsx", ".xls", ".csv", ".html", ".htm")):
+                expanded.append((inner_name, zf.read(info)))
+    return expanded
 
 
 # ─── Merge Multiple Files ────────────────────────────────────────────────────

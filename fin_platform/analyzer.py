@@ -576,6 +576,26 @@ def analyze_financials(data: FinancialData, mappings: MappingDict) -> AnalysisRe
             if rev and rev != 0:
                 wc.setdefault("WC/Revenue %", {})[y] = (ca - cl) / rev * 100
 
+    # Cash-flow quick view
+    fcf: Dict[str, Dict[str, float]] = {
+        "Operating Cash Flow": {},
+        "Capital Expenditure": {},
+        "Free Cash Flow": {},
+    }
+    for y in years:
+        ocf = gv("Operating Cash Flow", y)
+        capex = gv("Capital Expenditure", y)
+        if capex in (None, 0):
+            capex = _get_capex_fallback(data, y)
+        capex_abs = abs(capex) if capex is not None else None
+
+        if ocf is not None:
+            fcf["Operating Cash Flow"][y] = ocf
+        if capex_abs is not None:
+            fcf["Capital Expenditure"][y] = capex_abs
+        if ocf is not None and capex_abs is not None:
+            fcf["Free Cash Flow"][y] = ocf - capex_abs
+
     # Trends
     trends = _compute_trends(data, mappings, years)
 
@@ -636,6 +656,7 @@ def analyze_financials(data: FinancialData, mappings: MappingDict) -> AnalysisRe
         trends=trends,
         anomalies=AnomalyData(),
         working_capital=wc,
+        fcf=fcf,
         dupont=dupont,
         insights=insights,
         quality_score=quality_score,

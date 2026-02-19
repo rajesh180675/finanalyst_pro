@@ -279,6 +279,11 @@ class PenmanNissimResult:
     company_type: Optional[CompanyCharacteristics] = None
     diagnostics: Optional[PNDiagnostics] = None
     nissim_profitability: Optional["NissimProfitabilityResult"] = None
+    # ── New analytical modules ─────────────────────────────────────────────
+    ccc_metrics: Optional["CCCMetrics"] = None
+    earnings_quality_dashboard: Optional["EarningsQualityDashboard"] = None
+    capital_allocation: Optional["CapitalAllocationResult"] = None
+    mean_reversion_panel: Optional["MeanReversionPanel"] = None
 
 
 @dataclass
@@ -295,8 +300,10 @@ class PiotroskiFScore:
 
 @dataclass
 class ScoringResult:
+    """Scoring models: Altman Z (1968) + Altman Z2033 (2002 EM) + Piotroski F (2000)."""
     altman_z: Dict[str, AltmanZScore] = field(default_factory=dict)
     piotroski_f: Dict[str, PiotroskiFScore] = field(default_factory=dict)
+    altman_z_double: Dict[str, "AltmanZDoubleScore"] = field(default_factory=dict)
 
 
 @dataclass
@@ -457,6 +464,168 @@ class NissimProfitabilityResult:
 
 
 @dataclass
+class CCCMetrics:
+    """Cash Conversion Cycle and working capital quality decomposition."""
+    dio: Dict[str, float] = field(default_factory=dict)
+    """Days Inventory Outstanding = Inventory / (COGS / 365)"""
+    dso: Dict[str, float] = field(default_factory=dict)
+    """Days Sales Outstanding = Trade Receivables / (Revenue / 365)"""
+    dpo: Dict[str, float] = field(default_factory=dict)
+    """Days Payable Outstanding = Trade Payables / (COGS / 365)"""
+    ccc: Dict[str, float] = field(default_factory=dict)
+    """Cash Conversion Cycle = DIO + DSO − DPO"""
+    # YoY growth comparison metrics (positive = getting worse / more stretched)
+    inventory_days_yoy: Dict[str, float] = field(default_factory=dict)
+    receivables_days_yoy: Dict[str, float] = field(default_factory=dict)
+    payables_days_yoy: Dict[str, float] = field(default_factory=dict)
+    # Quality cross-checks: inventory growth vs revenue growth (Δ% difference)
+    inventory_vs_revenue_gap: Dict[str, float] = field(default_factory=dict)
+    """Positive gap = inventory growing faster than revenue → potential build-up risk"""
+    receivables_vs_revenue_gap: Dict[str, float] = field(default_factory=dict)
+    """Positive gap = receivables growing faster than revenue → credit policy loosening"""
+    quality_flags: List[str] = field(default_factory=list)
+
+
+@dataclass
+class EarningsQualityVerdict:
+    """Decisive quality verdict for the Quality of Earnings dashboard."""
+    verdict: str  # "High confidence" | "Scrutinize further" | "Red flags present"
+    score: int    # 0-100 composite score
+    color: str    # CSS color for display
+    reasons: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+
+
+@dataclass
+class EarningsQualityDashboard:
+    """
+    Standalone Quality of Earnings analysis — opinionated and decisive.
+    Designed to answer: 'Can I trust the reported NOPAT?'
+    """
+    # NOPAT vs OCF gap (operating accruals) — primary signal
+    nopat_vs_ocf_gap: Dict[str, float] = field(default_factory=dict)
+    nopat_vs_ocf_gap_pct: Dict[str, float] = field(default_factory=dict)
+    """(NOPAT - OCF) / Revenue — cash conversion quality"""
+    # Revenue recognition risk
+    receivables_to_revenue: Dict[str, float] = field(default_factory=dict)
+    """DSO / 365 proxy — rising = revenue recognition concern"""
+    # Exceptional items history
+    exceptional_pct_of_nopat: Dict[str, float] = field(default_factory=dict)
+    """Exceptional items as % of reported NOPAT"""
+    exceptional_pct_of_profit: Dict[str, float] = field(default_factory=dict)
+    # ReOI persistence (correlation between year t and t+1 ReOI)
+    reoi_persistence_score: Optional[float] = None
+    """Pearson r between ReOI_t and ReOI_{t+1}; high = sustainable earnings"""
+    # Core vs Reported divergence
+    core_vs_reported_nopat_gap: Dict[str, float] = field(default_factory=dict)
+    # Verdict
+    verdict: Optional[EarningsQualityVerdict] = None
+
+
+@dataclass
+class CapitalAllocationResult:
+    """
+    Capital Allocation Scorecard — critical for cash-rich Indian companies.
+    Answers: What does management do with the excess cash generated?
+    """
+    reinvestment_rate: Dict[str, float] = field(default_factory=dict)
+    """ΔNOA_t / NOPAT_t — fraction of NOPAT reinvested in operations"""
+    incremental_roic: Dict[str, float] = field(default_factory=dict)
+    """ΔNOPAT / ΔNOA — return earned on new capital invested"""
+    fcf_conversion: Dict[str, float] = field(default_factory=dict)
+    """FCF / NOPAT — should exceed 1.0 for asset-light firms; <0.6 = concern"""
+    capex_intensity: Dict[str, float] = field(default_factory=dict)
+    """CapEx / Revenue — maintenance + growth capex burden"""
+    maintenance_capex_est: Dict[str, float] = field(default_factory=dict)
+    """Estimated maintenance capex ≈ Depreciation (conservative proxy)"""
+    growth_capex_est: Dict[str, float] = field(default_factory=dict)
+    """Estimated growth capex = Total CapEx − Depreciation (can be negative)"""
+    rnoa_on_incremental: Dict[str, float] = field(default_factory=dict)
+    """incremental_roic vs existing RNOA — is new investment value-accretive?"""
+    noa_growth_rate: Dict[str, float] = field(default_factory=dict)
+    insights: List[str] = field(default_factory=list)
+
+
+@dataclass
+class AltmanZDoubleScore:
+    """
+    Altman Z″ (2002) Emerging Market Model.
+    Calibrated for non-US firms; removes the market cap variable
+    (which requires market data the system doesn't have).
+
+    Z″ = 6.56×X1 + 3.26×X2 + 6.72×X3 + 1.05×X4
+    X1 = Working Capital / Total Assets
+    X2 = Retained Earnings / Total Assets
+    X3 = EBIT / Total Assets
+    X4 = Book Value of Equity / Total Liabilities
+
+    Zones: Safe Z″ > 2.6 | Grey 1.1–2.6 | Distress Z″ < 1.1
+    """
+    score: float
+    zone: str  # "Safe" | "Grey" | "Distress"
+    x1: float
+    x2: float
+    x3: float
+    x4: float
+
+
+@dataclass
+class SectorBenchmark:
+    """Hard-coded sector median benchmarks for mean-reversion anchoring."""
+    sector: str
+    rnoa_pct: float
+    opm_pct: float
+    noat: float
+    ofr: float
+    rooa_pct: float
+    note: str = ""
+
+
+@dataclass
+class MeanReversionPanel:
+    """
+    Semi-automated mean-reversion forecasting support panel.
+    Shows historical distribution stats + sector benchmarks for scenario seeding.
+    """
+    # Historical distribution
+    opm_mean: Optional[float] = None
+    opm_p10: Optional[float] = None
+    opm_p90: Optional[float] = None
+    opm_current: Optional[float] = None
+    opm_zscore: Optional[float] = None
+
+    oat_mean: Optional[float] = None
+    oat_p10: Optional[float] = None
+    oat_p90: Optional[float] = None
+    oat_current: Optional[float] = None
+
+    ofr_mean: Optional[float] = None
+    ofr_p10: Optional[float] = None
+    ofr_p90: Optional[float] = None
+    ofr_current: Optional[float] = None
+
+    rnoa_mean: Optional[float] = None
+    rnoa_p10: Optional[float] = None
+    rnoa_p90: Optional[float] = None
+    rnoa_current: Optional[float] = None
+
+    # Sector benchmark
+    sector: Optional[str] = None
+    sector_benchmark: Optional[SectorBenchmark] = None
+
+    # Bear/Base/Bull auto-seeded from percentiles
+    bear_opm: Optional[float] = None
+    base_opm: Optional[float] = None
+    bull_opm: Optional[float] = None
+
+    bear_noat: Optional[float] = None
+    base_noat: Optional[float] = None
+    bull_noat: Optional[float] = None
+
+    reversion_signals: List[str] = field(default_factory=list)
+
+
+@dataclass
 class PNOptions:
     strict_mode: bool = True
     classification_mode: PNClassificationMode = "auto"
@@ -464,6 +633,7 @@ class PNOptions:
     terminal_growth: float = 0.03
     forecast_years: int = 5
     forecast_method: ForecastMethod = "reoi_mean3"
+    sector: str = "Auto"  # NEW: sector for benchmarks
 
 
 @dataclass

@@ -36,6 +36,9 @@ from .types import (
     PiotroskiFScore,
     # Nissim (2023) extensions
     NissimOperatingDecomposition, NissimROCEHierarchy, NissimProfitabilityResult,
+    # New analytical modules
+    CCCMetrics, EarningsQualityVerdict, EarningsQualityDashboard,
+    CapitalAllocationResult, AltmanZDoubleScore, SectorBenchmark, MeanReversionPanel,
 )
 
 
@@ -146,6 +149,27 @@ def derive_val(
                     if "total current liabilities" in key.lower() and year in vals:
                         return float(vals[year])
 
+            case "Tax Expense":
+                te = get("Tax Expense")
+                if te is not None: return te
+                # Fallback: if "Tax Expense" not mapped but sub-items are available,
+                # try to derive from raw data directly
+                for key, vals in data.items():
+                    kl = key.lower().split("::")[-1]
+                    if year in vals and any(p in kl for p in [
+                        "tax expense", "tax expenses", "provision for tax",
+                        "income tax expense",
+                    ]):
+                        return float(vals[year])
+                # Last resort: current tax + deferred tax
+                ct = dt = None
+                for key, vals in data.items():
+                    kl = key.lower().split("::")[-1]
+                    if year in vals:
+                        if kl == "current tax" or kl == "current tax expense":
+                            ct = float(vals[year])
+                        elif kl in ("deferred tax", "deferred tax expense", "deferred tax charge"):
+                            dt = float(vals[year])
             case _:
                 # Fallback: inverse mapping search
                 for src, tgt in mappings.items():
@@ -689,7 +713,15 @@ def penman_nissim_analysis(
         dep = g("Depreciation", y, 0.0, True)
         cogs = g("Cost of Goods Sold", y, 0.0, True)
 
-        ebit = (pbt + (fc or 0.0)) if pbt is not None else None
+        # ── Strip Exceptional / Extraordinary Items from PBT ──────────────────
+        # Capitaline: "Exceptional Items Before Tax" sits between PBIT and PBT.
+        # PBT already includes them, so we must subtract to get recurring PBT.
+        # Penman-Nissim framework requires NOPAT to be based on recurring operations.
+        exc_items = g("Exceptional Items", y, 0.0, True)  # 0 when absent
+        exc_val = exc_items if exc_items is not None else 0.0
+        recurring_pbt = (pbt - exc_val) if pbt is not None else None
+
+        ebit = (recurring_pbt + (fc or 0.0)) if recurring_pbt is not None else None
 
         fin_income = 0.0 if treat_investments_as_operating else (oi or 0.0)
         fin_expense = fc or 0.0
@@ -701,9 +733,14 @@ def penman_nissim_analysis(
         else:
             operating_income_bt = ebit - (oi or 0.0)
 
-        # Effective tax rate (bounded 5%–50%)
+        # Effective tax rate (bounded 5%–50%).
+        # Use recurring_pbt (excl. exceptional) for a stable rate estimate.
         eff_tax = 0.25
-        if pbt is not None and pbt > 0 and tax is not None:
+        if recurring_pbt is not None and recurring_pbt > 0 and tax is not None:
+            raw_rate = tax / recurring_pbt
+            eff_tax = min(max(raw_rate, 0.05), 0.50)
+        elif pbt is not None and pbt > 0 and tax is not None:
+            # Fallback: use raw PBT if recurring_pbt unavailable
             raw_rate = tax / pbt
             eff_tax = min(max(raw_rate, 0.05), 0.50)
         else:
@@ -751,6 +788,11 @@ def penman_nissim_analysis(
                 row.tax_on_operating = tax_on_operating
                 row.tax_on_financial = tax_on_financial
                 row.nopat = nopat; row.net_financial_expense_at = nfe_at
+                # Note exceptional items stripping for transparency
+                if exc_items and abs(exc_items) > 0.01:
+                    row.notes = (row.notes or []) + [
+                        f"Exceptional items ({exc_items:.2f}) stripped from PBT for NOPAT"
+                    ]
                 break
 
     # ── PN Ratios ─────────────────────────────────────────────────────────────
@@ -1007,6 +1049,33 @@ def penman_nissim_analysis(
         fix_suggestions.append("NOA missing: verify Current Assets/Liabilities, Total Assets, Total Equity mappings.")
     if not any(k.startswith("CashFlow::") for k in data):
         fix_suggestions.append("Cash Flow statement missing: FCF and cash-based diagnostics unavailable.")
+
+    # Warn if gross revenue is mapped (Capitaline INDAS has both gross and net lines)
+    rev_sources = [src for src, tgt in mappings.items() if tgt == "Revenue"]
+    for rs in rev_sources:
+        rs_lower = rs.lower()
+        if "net" not in rs_lower and "excise" not in rs_lower:
+            # Check if a net variant exists in the data
+            net_variants = [k for k in data if "net" in k.lower() and "revenue from operations" in k.lower()]
+            if net_variants:
+                fix_suggestions.append(
+                    f"⚠️ Revenue mapped from '{rs}' (gross) but a net-of-excise line also exists: "
+                    f"'{net_variants[0]}'. Re-map to the net line for accurate OPM/RNOA computation. "
+                    f"Gross revenue overstates turnover metrics."
+                )
+    
+    # Warn if only Current Tax is mapped (missing Deferred Tax)
+    tax_sources = [src for src, tgt in mappings.items() if tgt == "Tax Expense"]
+    for ts in tax_sources:
+        if "current tax" in ts.lower() and "total" not in ts.lower():
+            deferred_exists = any("deferred tax" in k.lower() for k in data
+                                  if "BalanceSheet" not in k and "deferred tax assets" not in k.lower())
+            if deferred_exists:
+                fix_suggestions.append(
+                    f"⚠️ Tax Expense mapped from '{ts}' (current tax only). "
+                    f"Deferred Tax also exists in data. Effective tax rate may be understated; "
+                    f"NOPAT may be slightly overstated."
+                )
 
     # ── IS reconciliation checks ──────────────────────────────────────────────
     income_stmt_checks: List[ReconciliationRow] = []
@@ -1493,6 +1562,16 @@ def penman_nissim_analysis(
     base_result.nissim_profitability = nissim_profitability_analysis(
         pn_result=base_result, data=data, mappings=mappings,
     )
+
+    # ── New analytical modules ───────────────────────────────────────────────
+    base_result.ccc_metrics = compute_ccc(data, mappings, years)
+    base_result.capital_allocation = compute_capital_allocation(base_result, data, mappings, years)
+    base_result.earnings_quality_dashboard = compute_earnings_quality_dashboard(
+        base_result, data, mappings, years
+    )
+    sector = options.sector if options else "Auto"
+    base_result.mean_reversion_panel = compute_mean_reversion_panel(base_result, sector=sector)
+
     return base_result
 
 
@@ -1568,10 +1647,694 @@ def calculate_scores(data: FinancialData, mappings: MappingDict) -> ScoringResul
 
         piotroski_f[y] = PiotroskiFScore(score=min(score, 9), signals=signals)
 
-    return ScoringResult(altman_z=altman_z, piotroski_f=piotroski_f)
+    altman_z_double = calculate_altman_z_double(data, mappings, years)
+    return ScoringResult(altman_z=altman_z, piotroski_f=piotroski_f, altman_z_double=altman_z_double)
 
 
-# ─── Nissim (2023) Profitability Analysis ─────────────────────────────────────
+# ─── Sector Benchmarks ────────────────────────────────────────────────────────
+
+SECTOR_BENCHMARKS: Dict[str, SectorBenchmark] = {
+    "Manufacturing": SectorBenchmark(
+        sector="Manufacturing", rnoa_pct=14.0, opm_pct=10.0, noat=1.5, ofr=0.65, rooa_pct=9.0,
+        note="Capital-intensive; moderate OFR; NOAT <2x is normal"
+    ),
+    "IT/Technology": SectorBenchmark(
+        sector="IT/Technology", rnoa_pct=28.0, opm_pct=20.0, noat=3.5, ofr=0.72, rooa_pct=20.0,
+        note="Asset-light; high OPM; NOAT >3x is normal; FLEV typically <0"
+    ),
+    "FMCG/Consumer": SectorBenchmark(
+        sector="FMCG/Consumer", rnoa_pct=35.0, opm_pct=15.0, noat=2.2, ofr=0.55, rooa_pct=20.0,
+        note="Low OFR due to distributor credit; strong operating leverage"
+    ),
+    "Pharma": SectorBenchmark(
+        sector="Pharma", rnoa_pct=18.0, opm_pct=16.0, noat=1.2, ofr=0.65, rooa_pct=12.0,
+        note="R&D intensive; OPM varies by product mix; US FDA exposure matters"
+    ),
+    "Specialty Chemicals": SectorBenchmark(
+        sector="Specialty Chemicals", rnoa_pct=22.0, opm_pct=14.0, noat=1.5, ofr=0.60, rooa_pct=13.0,
+        note="Capacity-driven; OPM expands at high utilisation; China competition risk"
+    ),
+    "Infrastructure": SectorBenchmark(
+        sector="Infrastructure", rnoa_pct=10.0, opm_pct=18.0, noat=0.6, ofr=0.80, rooa_pct=8.0,
+        note="Capital-heavy; high OFR; distinguish maintenance vs growth capex"
+    ),
+    "Financial Services": SectorBenchmark(
+        sector="Financial Services", rnoa_pct=float("nan"), opm_pct=float("nan"), noat=float("nan"),
+        ofr=float("nan"), rooa_pct=float("nan"),
+        note="PN framework not directly applicable; use ROA/ROE/NIM analysis"
+    ),
+    "Auto/Auto Ancillaries": SectorBenchmark(
+        sector="Auto/Auto Ancillaries", rnoa_pct=16.0, opm_pct=10.0, noat=1.6, ofr=0.62, rooa_pct=10.0,
+        note="Cyclical; high fixed cost intensity; RNOA volatile"
+    ),
+}
+
+
+# ─── Cash Conversion Cycle ────────────────────────────────────────────────────
+
+def compute_ccc(data: FinancialData, mappings: MappingDict, years: List[str]) -> CCCMetrics:
+    """
+    Cash Conversion Cycle decomposition + working capital quality analysis.
+
+    DIO = Inventory / (COGS / 365)          — days inventory held
+    DSO = Trade Receivables / (Revenue / 365) — days to collect
+    DPO = Trade Payables / (COGS / 365)     — days to pay suppliers
+    CCC = DIO + DSO − DPO                   — net cash cycle
+
+    Quality cross-checks detect:
+    - Inventory building faster than revenue → potential slow-moving stock
+    - Receivables growing faster than revenue → potential credit policy loosening
+    """
+    gv = lambda t, y: derive_val(data, mappings, t, y)
+
+    dio: Dict[str, float] = {}
+    dso: Dict[str, float] = {}
+    dpo: Dict[str, float] = {}
+    ccc: Dict[str, float] = {}
+    inv_days_yoy: Dict[str, float] = {}
+    rec_days_yoy: Dict[str, float] = {}
+    pay_days_yoy: Dict[str, float] = {}
+    inv_vs_rev: Dict[str, float] = {}
+    rec_vs_rev: Dict[str, float] = {}
+    quality_flags: List[str] = []
+
+    prev_year_data: Dict[str, Optional[float]] = {}
+
+    for i, y in enumerate(years):
+        inv = gv("Inventory", y)
+        ar = gv("Trade Receivables", y)
+        ap = gv("Accounts Payable", y)
+        rev = gv("Revenue", y)
+        cogs = gv("Cost of Goods Sold", y)
+
+        if cogs is None or cogs <= 0:
+            cogs = rev  # fallback: treat revenue as proxy for COGS if not available
+
+        if inv is not None and cogs is not None and cogs > 0:
+            dio_v = inv / (cogs / 365)
+            dio[y] = dio_v
+            if i > 0 and years[i - 1] in dio:
+                inv_days_yoy[y] = dio_v - dio[years[i - 1]]
+
+        if ar is not None and rev is not None and rev > 0:
+            dso_v = ar / (rev / 365)
+            dso[y] = dso_v
+            if i > 0 and years[i - 1] in dso:
+                rec_days_yoy[y] = dso_v - dso[years[i - 1]]
+
+        if ap is not None and cogs is not None and cogs > 0:
+            dpo_v = ap / (cogs / 365)
+            dpo[y] = dpo_v
+            if i > 0 and years[i - 1] in dpo:
+                pay_days_yoy[y] = dpo_v - dpo[years[i - 1]]
+
+        if y in dio and y in dso and y in dpo:
+            ccc[y] = dio[y] + dso[y] - dpo[y]
+
+        # Quality cross-checks (YoY growth deltas)
+        if i > 0:
+            prev_y = years[i - 1]
+            prev_inv = gv("Inventory", prev_y)
+            prev_ar = gv("Trade Receivables", prev_y)
+            prev_rev = gv("Revenue", prev_y)
+
+            if inv is not None and prev_inv is not None and prev_inv > 0:
+                inv_growth = (inv - prev_inv) / prev_inv
+                rev_growth = ((rev - prev_rev) / prev_rev) if (rev and prev_rev and prev_rev > 0) else None
+                if rev_growth is not None:
+                    inv_vs_rev[y] = (inv_growth - rev_growth) * 100  # pp excess
+
+            if ar is not None and prev_ar is not None and prev_ar > 0:
+                ar_growth = (ar - prev_ar) / prev_ar
+                rev_growth2 = ((rev - prev_rev) / prev_rev) if (rev and prev_rev and prev_rev > 0) else None
+                if rev_growth2 is not None:
+                    rec_vs_rev[y] = (ar_growth - rev_growth2) * 100  # pp excess
+
+    # Quality flags: persistent patterns
+    if len(inv_vs_rev) >= 2:
+        recent_inv_gaps = [v for v in list(inv_vs_rev.values())[-3:] if abs(v) < 1000]
+        if recent_inv_gaps and sum(1 for v in recent_inv_gaps if v > 5) >= 2:
+            quality_flags.append(
+                "⚠️ Inventory growing consistently faster than revenue in recent years — "
+                "possible slow-moving stock build-up or demand slowdown"
+            )
+        elif recent_inv_gaps and sum(1 for v in recent_inv_gaps if v < -5) >= 2:
+            quality_flags.append(
+                "✅ Inventory growing slower than revenue — improving inventory efficiency"
+            )
+
+    if len(rec_vs_rev) >= 2:
+        recent_rec_gaps = [v for v in list(rec_vs_rev.values())[-3:] if abs(v) < 1000]
+        if recent_rec_gaps and sum(1 for v in recent_rec_gaps if v > 5) >= 2:
+            quality_flags.append(
+                "⚠️ Receivables growing faster than revenue — potential credit policy loosening or "
+                "collection issues; verify DSO trend for confirmation"
+            )
+
+    if ccc:
+        ccc_vals = list(ccc.values())
+        if len(ccc_vals) >= 3:
+            recent_ccc = ccc_vals[-3:]
+            if recent_ccc[-1] > recent_ccc[0] + 15:
+                quality_flags.append(
+                    f"⚠️ CCC has expanded by {recent_ccc[-1] - recent_ccc[0]:.0f} days over "
+                    f"recent periods — working capital is absorbing more cash"
+                )
+            elif recent_ccc[-1] < recent_ccc[0] - 15:
+                quality_flags.append(
+                    f"✅ CCC has compressed by {recent_ccc[0] - recent_ccc[-1]:.0f} days — "
+                    f"excellent working capital efficiency improvement"
+                )
+
+    return CCCMetrics(
+        dio=dio, dso=dso, dpo=dpo, ccc=ccc,
+        inventory_days_yoy=inv_days_yoy,
+        receivables_days_yoy=rec_days_yoy,
+        payables_days_yoy=pay_days_yoy,
+        inventory_vs_revenue_gap=inv_vs_rev,
+        receivables_vs_revenue_gap=rec_vs_rev,
+        quality_flags=quality_flags,
+    )
+
+
+# ─── Capital Allocation Scorecard ─────────────────────────────────────────────
+
+def compute_capital_allocation(
+    pn_result: PenmanNissimResult,
+    data: FinancialData,
+    mappings: MappingDict,
+    years: List[str],
+) -> CapitalAllocationResult:
+    """
+    Capital Allocation Scorecard for high-quality (typically debt-free) Indian companies.
+
+    Key metrics:
+    - Reinvestment Rate = ΔNOA / NOPAT  (what fraction of earnings go back into operations)
+    - Incremental ROIC = ΔNOPAT / ΔNOA  (return on new capital; compare vs existing RNOA)
+    - FCF Conversion = FCF / NOPAT      (>1.0 = asset-light; <0.6 = concern)
+    - Maintenance vs Growth CapEx split (Depreciation as maintenance proxy)
+    """
+    gv = lambda t, y: derive_val(data, mappings, t, y)
+    bs = pn_result.reformulated_bs
+    is_ = pn_result.reformulated_is
+    ratios = pn_result.ratios
+    fcf = pn_result.fcf
+
+    reinvestment_rate: Dict[str, float] = {}
+    incremental_roic: Dict[str, float] = {}
+    fcf_conversion: Dict[str, float] = {}
+    capex_intensity: Dict[str, float] = {}
+    maint_capex: Dict[str, float] = {}
+    growth_capex: Dict[str, float] = {}
+    rnoa_incremental: Dict[str, float] = {}
+    noa_growth_rate: Dict[str, float] = {}
+    insights: List[str] = []
+
+    for i, y in enumerate(years):
+        nopat = is_.get("NOPAT", {}).get(y)
+        noa = bs.get("Net Operating Assets", {}).get(y)
+        prev_noa = bs.get("Net Operating Assets", {}).get(years[i - 1]) if i > 0 else None
+        prev_nopat = is_.get("NOPAT", {}).get(years[i - 1]) if i > 0 else None
+        fcf_v = fcf.get("Free Cash Flow", {}).get(y)
+        capex_v = fcf.get("Capital Expenditure", {}).get(y)
+        rev = is_.get("Revenue", {}).get(y)
+        dep = gv("Depreciation", y)
+
+        # Reinvestment rate
+        if i > 0 and noa is not None and prev_noa is not None and nopat is not None and abs(nopat) > 1:
+            delta_noa = noa - prev_noa
+            reinvestment_rate[y] = delta_noa / nopat
+
+            # NOA growth rate
+            if abs(prev_noa) > 1:
+                noa_growth_rate[y] = (noa - prev_noa) / abs(prev_noa) * 100
+
+        # Incremental ROIC = ΔNOPAT / ΔNOA
+        if (i > 0 and nopat is not None and prev_nopat is not None
+                and noa is not None and prev_noa is not None):
+            d_nopat = nopat - prev_nopat
+            d_noa = noa - prev_noa
+            if abs(d_noa) > max(1.0, abs(noa) * 0.02):  # only meaningful deltas
+                inc_roic = d_nopat / d_noa * 100
+                incremental_roic[y] = max(-100.0, min(200.0, inc_roic))
+                rnoa_v = ratios.get("RNOA %", {}).get(y)
+                if rnoa_v is not None:
+                    rnoa_incremental[y] = inc_roic - rnoa_v
+
+        # FCF conversion
+        if fcf_v is not None and nopat is not None and abs(nopat) > 1:
+            fcf_conversion[y] = fcf_v / nopat
+
+        # CapEx intensity
+        if capex_v is not None and rev is not None and rev > 0:
+            capex_intensity[y] = capex_v / rev * 100
+
+        # Maintenance vs Growth CapEx split
+        if capex_v is not None and dep is not None:
+            maint_capex[y] = dep
+            growth_capex[y] = max(0.0, capex_v - dep)
+
+    # Generate insights
+    if fcf_conversion:
+        recent_fc = [v for v in list(fcf_conversion.values())[-3:]]
+        avg_fc = sum(recent_fc) / len(recent_fc) if recent_fc else None
+        if avg_fc is not None:
+            if avg_fc > 1.0:
+                insights.append(
+                    f"✅ Excellent FCF conversion (avg {avg_fc:.1f}x) — operations generate more "
+                    f"cash than reported NOPAT; asset-light characteristics"
+                )
+            elif avg_fc < 0.6:
+                insights.append(
+                    f"⚠️ FCF conversion ({avg_fc:.1f}x) below 0.6 — significant capex or working "
+                    f"capital drag on cash earnings; investigate if growth-driven or structural"
+                )
+
+    if incremental_roic:
+        recent_inc = [v for v in list(incremental_roic.values())[-3:] if abs(v) < 200]
+        avg_inc = sum(recent_inc) / len(recent_inc) if recent_inc else None
+        if avg_inc is not None:
+            recent_rnoa = [v for k, v in list(ratios.get("RNOA %", {}).items())[-3:]]
+            avg_rnoa = sum(recent_rnoa) / len(recent_rnoa) if recent_rnoa else None
+            if avg_rnoa is not None:
+                if avg_inc > avg_rnoa + 5:
+                    insights.append(
+                        f"✅ Incremental ROIC ({avg_inc:.1f}%) significantly exceeds existing RNOA "
+                        f"({avg_rnoa:.1f}%) — new investments are value-accretive"
+                    )
+                elif avg_inc < avg_rnoa - 10:
+                    insights.append(
+                        f"⚠️ Incremental ROIC ({avg_inc:.1f}%) below existing RNOA ({avg_rnoa:.1f}%) "
+                        f"— marginal investments are diluting returns; scrutinize capital deployment"
+                    )
+
+    if reinvestment_rate:
+        recent_rr = [v for v in list(reinvestment_rate.values())[-3:] if abs(v) < 5]
+        avg_rr = sum(recent_rr) / len(recent_rr) if recent_rr else None
+        if avg_rr is not None:
+            if avg_rr < 0.2:
+                insights.append(
+                    f"ℹ️ Low reinvestment rate ({avg_rr:.1%}) — company retains most earnings as cash; "
+                    f"check if cash is being returned via dividends/buybacks or sitting idle"
+                )
+            elif avg_rr > 0.8:
+                insights.append(
+                    f"ℹ️ High reinvestment rate ({avg_rr:.1%}) — company is deploying most NOPAT "
+                    f"into NOA; sustainable only if incremental ROIC > cost of capital"
+                )
+
+    return CapitalAllocationResult(
+        reinvestment_rate=reinvestment_rate,
+        incremental_roic=incremental_roic,
+        fcf_conversion=fcf_conversion,
+        capex_intensity=capex_intensity,
+        maintenance_capex_est=maint_capex,
+        growth_capex_est=growth_capex,
+        rnoa_on_incremental=rnoa_incremental,
+        noa_growth_rate=noa_growth_rate,
+        insights=insights,
+    )
+
+
+# ─── Earnings Quality Dashboard ───────────────────────────────────────────────
+
+def _percentile(values: List[float], p: float) -> Optional[float]:
+    """Simple percentile calculation (linear interpolation)."""
+    if not values:
+        return None
+    sorted_v = sorted(values)
+    n = len(sorted_v)
+    idx = (p / 100) * (n - 1)
+    lo = int(idx)
+    hi = lo + 1
+    if hi >= n:
+        return sorted_v[-1]
+    frac = idx - lo
+    return sorted_v[lo] * (1 - frac) + sorted_v[hi] * frac
+
+
+def _pearson_r(xs: List[float], ys: List[float]) -> Optional[float]:
+    """Pearson correlation coefficient."""
+    n = min(len(xs), len(ys))
+    if n < 3:
+        return None
+    xs, ys = xs[:n], ys[:n]
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    sx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    sy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    if sx < 1e-9 or sy < 1e-9:
+        return None
+    return cov / (sx * sy)
+
+
+def compute_earnings_quality_dashboard(
+    pn_result: PenmanNissimResult,
+    data: FinancialData,
+    mappings: MappingDict,
+    years: List[str],
+) -> EarningsQualityDashboard:
+    """
+    Standalone Quality of Earnings analysis — opinionated and decisive.
+
+    The central question: Is NOPAT a reliable predictor of future cash generation?
+
+    Five signals:
+    1. Accrual ratio (NOPAT - OCF) / AvgNOA — primary, persistent red flag if >15%
+    2. Revenue recognition risk — DSO trend (rising = concern)
+    3. ReOI persistence — correlation between year t and t+1 ReOI
+    4. Exceptional items — recurring 'exceptional' items = misleading branding
+    5. Core vs Reported NOPAT divergence — if large, reported profits are inflated
+
+    Verdict: "High confidence" | "Scrutinize further" | "Red flags present"
+    """
+    gv = lambda t, y: derive_val(data, mappings, t, y)
+    is_ = pn_result.reformulated_is
+    bs = pn_result.reformulated_bs
+    academic = pn_result.academic
+    fcf = pn_result.fcf
+
+    nopat_vs_ocf_gap: Dict[str, float] = {}
+    nopat_vs_ocf_gap_pct: Dict[str, float] = {}
+    rec_to_rev: Dict[str, float] = {}
+    exc_pct_nopat: Dict[str, float] = {}
+    exc_pct_profit: Dict[str, float] = {}
+    core_vs_rep: Dict[str, float] = {}
+    reasons: List[str] = []
+    warnings: List[str] = []
+    score = 100  # Start perfect, deduct for red flags
+
+    for y in years:
+        nopat = is_.get("NOPAT", {}).get(y)
+        ocf = fcf.get("Operating Cash Flow", {}).get(y)
+        rev = is_.get("Revenue", {}).get(y)
+        ni = is_.get("Net Income", {}).get(y)
+        ar = gv("Trade Receivables", y)
+        exc = gv("Exceptional Items", y)
+
+        if nopat is not None and ocf is not None:
+            gap = nopat - ocf
+            nopat_vs_ocf_gap[y] = gap
+            noa_y = bs.get("Net Operating Assets", {}).get(y)
+            oa_y = bs.get("Operating Assets", {}).get(y)
+            denom = noa_y or oa_y or rev
+            if denom and abs(denom) > 1:
+                nopat_vs_ocf_gap_pct[y] = gap / denom * 100
+
+        if ar is not None and rev is not None and rev > 0:
+            rec_to_rev[y] = ar / rev * 100
+
+        if exc is not None and abs(exc) > 0.01:
+            nopat_val = nopat or 1.0
+            exc_pct_nopat[y] = exc / abs(nopat_val) * 100
+            if ni and abs(ni) > 0.01:
+                exc_pct_profit[y] = exc / abs(ni) * 100
+
+        core = academic.core_nopat.get(y) if (academic and academic.core_nopat) else None
+        if core is not None and nopat is not None and abs(nopat) > 0.01:
+            core_vs_rep[y] = (nopat - core) / abs(nopat) * 100
+
+    # ReOI persistence score
+    reoi_series = sorted(academic.reoi.items()) if (academic and academic.reoi) else []
+    reoi_persistence: Optional[float] = None
+    if len(reoi_series) >= 4:
+        reoi_t = [v for _, v in reoi_series[:-1]]
+        reoi_t1 = [v for _, v in reoi_series[1:]]
+        reoi_persistence = _pearson_r(reoi_t, reoi_t1)
+
+    # ── Scoring ────────────────────────────────────────────────────────────────
+    # Signal 1: Accrual ratio direction
+    if nopat_vs_ocf_gap_pct:
+        recent_gap_pcts = [v for v in list(nopat_vs_ocf_gap_pct.values())[-4:]]
+        avg_gap = sum(recent_gap_pcts) / len(recent_gap_pcts) if recent_gap_pcts else 0
+        high_accrual_yrs = sum(1 for v in recent_gap_pcts if abs(v) > 15)
+
+        if avg_gap > 15:
+            score -= 30
+            reasons.append(
+                f"🔴 Accruals persistently high: NOPAT exceeds OCF by avg {avg_gap:.1f}% — "
+                f"profits are not converting to cash at expected rates"
+            )
+        elif avg_gap > 7:
+            score -= 15
+            warnings.append(
+                f"🟡 Moderate accruals: avg NOPAT-OCF gap {avg_gap:.1f}% — watch for escalation"
+            )
+        elif avg_gap < -5:
+            reasons.append(
+                f"🟢 OCF > NOPAT consistently (avg gap {avg_gap:.1f}%) — high-quality cash earnings"
+            )
+
+        if high_accrual_yrs >= 3:
+            score -= 10
+            warnings.append(
+                f"🔴 High accruals in {high_accrual_yrs}/{len(recent_gap_pcts)} recent years — persistent pattern"
+            )
+
+    # Signal 2: Receivables DSO trend (rising = concern)
+    if len(rec_to_rev) >= 3:
+        rec_vals = [v for v in list(rec_to_rev.values())[-3:]]
+        if rec_vals[-1] > rec_vals[0] * 1.2:
+            score -= 15
+            warnings.append(
+                f"🟡 Receivables-to-revenue rising ({rec_vals[0]:.1f}% → {rec_vals[-1]:.1f}%): "
+                f"revenue recognition may be front-running cash collection"
+            )
+        elif rec_vals[-1] < rec_vals[0] * 0.85:
+            reasons.append(
+                f"🟢 Receivables-to-revenue improving ({rec_vals[0]:.1f}% → {rec_vals[-1]:.1f}%): "
+                f"faster collection"
+            )
+
+    # Signal 3: ReOI persistence
+    if reoi_persistence is not None:
+        if reoi_persistence >= 0.7:
+            reasons.append(
+                f"🟢 ReOI highly persistent (r={reoi_persistence:.2f}) — excess returns are sustainable"
+            )
+        elif reoi_persistence < 0.3:
+            score -= 15
+            warnings.append(
+                f"🟡 Low ReOI persistence (r={reoi_persistence:.2f}) — earnings quality may be lumpy; "
+                f"use mean-reversion assumptions for forecasting"
+            )
+
+    # Signal 4: Exceptional items
+    if exc_pct_nopat:
+        exc_vals = list(exc_pct_nopat.values())
+        count_sig = sum(1 for v in exc_vals if abs(v) > 10)
+        if count_sig >= 3:
+            score -= 20
+            warnings.append(
+                f"🔴 Exceptional items >10% of NOPAT in {count_sig}/{len(exc_vals)} years — "
+                f"'exceptional' items are actually recurrent; rely on Core NOPAT for forecasting"
+            )
+        elif count_sig >= 1:
+            score -= 5
+            warnings.append(
+                f"🟡 Exceptional items present in {count_sig}/{len(exc_vals)} years — "
+                f"check if pattern is genuinely one-off"
+            )
+
+    # Signal 5: Core vs Reported divergence
+    if core_vs_rep:
+        recent_div = [abs(v) for v in list(core_vs_rep.values())[-3:]]
+        avg_div = sum(recent_div) / len(recent_div) if recent_div else 0
+        if avg_div > 20:
+            score -= 15
+            warnings.append(
+                f"🟡 Core NOPAT diverges from Reported by avg {avg_div:.1f}% — "
+                f"exceptional items materially inflate reported profits"
+            )
+
+    score = max(0, min(100, score))
+
+    if score >= 75:
+        verdict_str = "High confidence"
+        color = "#166534"
+        reasons.insert(0, "Overall earnings quality assessment: HIGH CONFIDENCE")
+    elif score >= 45:
+        verdict_str = "Scrutinize further"
+        color = "#854d0e"
+        warnings.insert(0, "Overall earnings quality assessment: SCRUTINIZE FURTHER")
+    else:
+        verdict_str = "Red flags present"
+        color = "#991b1b"
+        warnings.insert(0, "Overall earnings quality assessment: RED FLAGS PRESENT")
+
+    verdict = EarningsQualityVerdict(
+        verdict=verdict_str, score=score, color=color,
+        reasons=reasons, warnings=warnings,
+    )
+
+    return EarningsQualityDashboard(
+        nopat_vs_ocf_gap=nopat_vs_ocf_gap,
+        nopat_vs_ocf_gap_pct=nopat_vs_ocf_gap_pct,
+        receivables_to_revenue=rec_to_rev,
+        exceptional_pct_of_nopat=exc_pct_nopat,
+        exceptional_pct_of_profit=exc_pct_profit,
+        reoi_persistence_score=reoi_persistence,
+        core_vs_reported_nopat_gap=core_vs_rep,
+        verdict=verdict,
+    )
+
+
+# ─── Altman Z″ (Emerging Market 2002 Model) ───────────────────────────────────
+
+def calculate_altman_z_double(
+    data: FinancialData, mappings: MappingDict, years: List[str]
+) -> Dict[str, AltmanZDoubleScore]:
+    """
+    Altman Z″ (2002) — Emerging Market Model.
+    Designed for non-US, non-financial firms.
+    Removes the market capitalisation variable (X5 in the 1968 model),
+    replacing it with book equity/total liabilities.
+
+    Z″ = 6.56×X1 + 3.26×X2 + 6.72×X3 + 1.05×X4
+    X1 = Working Capital / Total Assets
+    X2 = Retained Earnings / Total Assets
+    X3 = EBIT / Total Assets
+    X4 = Book Value of Equity / Total Liabilities
+
+    Safe: Z″ > 2.6 | Grey: 1.1–2.6 | Distress: Z″ < 1.1
+    Reference: Altman, E.I. (2002). "Financial Ratios, Discriminant Analysis and
+    the Prediction of Corporate Bankruptcy." Journal of Finance.
+    """
+    results: Dict[str, AltmanZDoubleScore] = {}
+    gv = lambda t, y: derive_val(data, mappings, t, y)
+
+    for y in years:
+        ta = gv("Total Assets", y)
+        if ta is None or ta <= 0:
+            continue
+
+        ca = gv("Current Assets", y) or 0.0
+        cl = gv("Current Liabilities", y) or 0.0
+        re_ = gv("Retained Earnings", y) or 0.0
+        ebit = gv("EBIT", y) or 0.0
+        te = gv("Total Equity", y) or 0.0
+        tl = ta - te
+
+        wc = ca - cl
+        x1 = wc / ta
+        x2 = re_ / ta
+        x3 = ebit / ta
+        x4 = te / (tl if tl > 0 else 1.0)
+
+        z_double = 6.56 * x1 + 3.26 * x2 + 6.72 * x3 + 1.05 * x4
+
+        zone = "Safe" if z_double > 2.6 else ("Grey" if z_double > 1.1 else "Distress")
+
+        results[y] = AltmanZDoubleScore(
+            score=round(z_double, 2),
+            zone=zone,
+            x1=round(x1, 4),
+            x2=round(x2, 4),
+            x3=round(x3, 4),
+            x4=round(x4, 4),
+        )
+
+    return results
+
+
+# ─── Mean-Reversion Forecasting Panel ────────────────────────────────────────
+
+def compute_mean_reversion_panel(
+    pn_result: PenmanNissimResult,
+    sector: str = "Auto",
+) -> MeanReversionPanel:
+    """
+    Semi-automated mean-reversion forecasting support.
+    Computes historical percentiles for OPM, OAT (NOAT), OFR, RNOA and
+    maps them to Bear/Base/Bull scenario seeds.
+
+    Bear = 10th percentile historical OPM (and last OAT if NOAT is stable)
+    Base = Median (50th percentile) — natural mean-reversion anchor
+    Bull = 90th percentile historical OPM
+
+    Highlights when current values are >1.5σ from the historical mean.
+    """
+    ratios = pn_result.ratios
+    nissim = pn_result.nissim_profitability
+    op = nissim.operating if nissim else None
+
+    opm_series = list(ratios.get("OPM %", {}).values())
+    rnoa_series = list(ratios.get("RNOA %", {}).values())
+    noat_series = list(ratios.get("NOAT", {}).values())
+    ofr_series = list(op.ofr.values()) if op and op.ofr else []
+
+    def stats(vals: List[float]):
+        if not vals:
+            return None, None, None, None
+        mean = sum(vals) / len(vals)
+        std = _std_dev(vals)
+        p10 = _percentile(vals, 10)
+        p90 = _percentile(vals, 90)
+        return mean, std, p10, p90
+
+    opm_mean, opm_std, opm_p10, opm_p90 = stats(opm_series)
+    rnoa_mean, _, rnoa_p10, rnoa_p90 = stats(rnoa_series)
+    noat_mean, _, noat_p10, noat_p90 = stats(noat_series)
+    ofr_mean, _, ofr_p10, ofr_p90 = stats(ofr_series)
+
+    opm_current = opm_series[-1] if opm_series else None
+    rnoa_current = rnoa_series[-1] if rnoa_series else None
+    noat_current = noat_series[-1] if noat_series else None
+    ofr_current = ofr_series[-1] if ofr_series else None
+
+    # Z-score for current OPM (how far from mean in std dev units)
+    opm_zscore: Optional[float] = None
+    if opm_current is not None and opm_mean is not None and opm_std and opm_std > 0:
+        opm_zscore = (opm_current - opm_mean) / opm_std
+
+    reversion_signals: List[str] = []
+    if opm_zscore is not None and abs(opm_zscore) > 1.5:
+        direction = "above" if opm_zscore > 0 else "below"
+        reversion_signals.append(
+            f"⚡ Current OPM ({opm_current:.1f}%) is {abs(opm_zscore):.1f}σ {direction} its "
+            f"historical mean ({opm_mean:.1f}%) — strong mean-reversion expected"
+        )
+
+    # Sector benchmark lookup
+    sector_bm = SECTOR_BENCHMARKS.get(sector)
+    if sector == "Auto" or sector_bm is None:
+        sector_bm = None  # no benchmark in auto mode
+    else:
+        if opm_current is not None and not math.isnan(sector_bm.opm_pct):
+            diff = opm_current - sector_bm.opm_pct
+            direction = "above" if diff > 0 else "below"
+            reversion_signals.append(
+                f"📊 OPM {opm_current:.1f}% vs sector benchmark {sector_bm.opm_pct:.1f}% "
+                f"({abs(diff):.1f}pp {direction} median)"
+            )
+        if rnoa_current is not None and not math.isnan(sector_bm.rnoa_pct):
+            diff_r = rnoa_current - sector_bm.rnoa_pct
+            if abs(diff_r) > 5:
+                direction_r = "above" if diff_r > 0 else "below"
+                reversion_signals.append(
+                    f"📊 RNOA {rnoa_current:.1f}% vs sector benchmark {sector_bm.rnoa_pct:.1f}% "
+                    f"({abs(diff_r):.1f}pp {direction_r} median)"
+                )
+
+    return MeanReversionPanel(
+        opm_mean=opm_mean, opm_p10=opm_p10, opm_p90=opm_p90,
+        opm_current=opm_current, opm_zscore=opm_zscore,
+        oat_mean=noat_mean, oat_p10=noat_p10, oat_p90=noat_p90, oat_current=noat_current,
+        ofr_mean=ofr_mean, ofr_p10=ofr_p10, ofr_p90=ofr_p90, ofr_current=ofr_current,
+        rnoa_mean=rnoa_mean, rnoa_p10=rnoa_p10, rnoa_p90=rnoa_p90, rnoa_current=rnoa_current,
+        sector=sector,
+        sector_benchmark=sector_bm,
+        bear_opm=opm_p10,
+        base_opm=opm_mean,
+        bull_opm=opm_p90,
+        bear_noat=noat_p10,
+        base_noat=noat_mean,
+        bull_noat=noat_p90,
+        reversion_signals=reversion_signals,
+    )
+
+
 
 def _coeff_of_variation(series: Dict[str, float]) -> Optional[float]:
     """Coefficient of variation = std / |mean| — measures time-series stability."""

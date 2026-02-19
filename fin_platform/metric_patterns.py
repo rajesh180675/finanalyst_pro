@@ -73,17 +73,50 @@ METRIC_DEFS: Dict[str, PatternDef] = {
     "Total Equity": PatternDef("BalanceSheet", ["total equity", "total stockholders' equity", "total stockholders equity", "shareholders funds", "shareholders' funds", "total shareholders funds", "net worth"], ["total equity and liabilities"], priority=10),
     "Share Capital": PatternDef("BalanceSheet", ["share capital", "equity share capital", "paid-up capital", "paid up capital"], ["number of"], priority=8),
     "Retained Earnings": PatternDef("BalanceSheet", ["reserves and surplus", "retained earnings", "other equity", "reserves & surplus"], priority=7),
-    "Minority Interest": PatternDef("BalanceSheet", ["minority interest", "non-controlling interest", "non controlling interests"], priority=5),
+    "Minority Interest": PatternDef("BalanceSheet", [
+        "minority interest",
+        "non-controlling interest",
+        "non controlling interest",
+        "non-controlling interests",         # Capitaline INDAS: plural
+        "non controlling interests",
+        "nci",
+    ], priority=5),
     "Contingent Liabilities": PatternDef("BalanceSheet", ["contingent liabilities", "contingent liabilities and commitments"], priority=4),
 
     # ── Profit & Loss – Income ──────────────────────────────────────────────
-    "Revenue": PatternDef("ProfitLoss", ["revenue from operations", "revenue from operations(net)", "revenue from operations (net)", "revenue from operations net", "net sales", "sales turnover", "total revenue from operations"], ["total revenue"], priority=10),
+    # Net revenue (excludes excise duty) must win over gross when both present.
+    # Capitaline exports both "Revenue From Operations" (gross) and
+    # "Revenue From Operations(Net)". The latter is canonical for analysis.
+    # We keep both patterns here but rely on exclude to block the gross line
+    # when "(net)" variant is matched first via the priority scoring.
+    "Revenue": PatternDef("ProfitLoss", [
+        "revenue from operations net",       # Capitaline: highest-priority exact
+        "revenue from operations(net)",       # bracketed variant
+        "revenue from operations (net)",      # spaced variant
+        "net revenue from operations",
+        "net sales",
+        "sales turnover",
+        "total revenue from operations",
+        "revenue from operations",            # gross fallback — only if no net line
+    ], ["total revenue", "less excise", "excise duty"], priority=10),
     "Total Revenue": PatternDef("ProfitLoss", ["total revenue", "total income"], priority=9),
     "Other Income": PatternDef("ProfitLoss", ["other income", "other operating income", "non-operating income"], ["total income", "operating income"], priority=6),
     "Exceptional Items": PatternDef("ProfitLoss", ["exceptional items", "extraordinary items", "exceptional and extraordinary items"], priority=6),
 
     # ── Profit & Loss – Expenses ────────────────────────────────────────────
-    "Cost of Goods Sold": PatternDef("ProfitLoss", ["cost of goods sold", "cost of materials consumed", "raw material consumed", "purchases of stock-in-trade", "purchases of stock in trade", "cost of revenue"], priority=8),
+    "Cost of Goods Sold": PatternDef("ProfitLoss", [
+        "cost of goods sold",
+        "cost of materials consumed",        # plural (standard)
+        "cost of material consumed",         # singular (Capitaline INDAS format)
+        "raw material consumed",
+        "raw materials consumed",
+        "total raw material consumed",
+        "purchases of stock-in-trade",
+        "purchases of stock in trade",
+        "cost of revenue",
+        "direct material cost",
+        "material cost",
+    ], priority=8),
     "Employee Expenses": PatternDef("ProfitLoss", ["employee benefit expense", "employee benefits", "employee expenses", "employee benefits salaries other staff cost", "staff costs", "personnel expenses", "wages and salaries"], priority=7),
     "Depreciation": PatternDef("ProfitLoss", ["depreciation", "amortization", "depreciation and amortisation", "depreciation and amortization", "d&a"], ["accumulated"], priority=7),
     "Interest Expense": PatternDef("ProfitLoss", ["finance costs", "interest expense", "interest charges", "borrowing costs", "financial expenses", "total interest expenses", "interest on bank borrowings", "interest on term fixed loans"], priority=8),
@@ -97,16 +130,64 @@ METRIC_DEFS: Dict[str, PatternDef] = {
     "Gross Profit": PatternDef("ProfitLoss", ["gross profit", "gross margin"], priority=7),
     "Operating Income": PatternDef("ProfitLoss", ["operating profit", "operating income", "profit from operations", "ebit"], ["before", "interest", "tax", "d&a"], priority=8),
     "Income Before Tax": PatternDef("ProfitLoss", ["profit before tax", "income before tax", "earnings before tax", "pbt", "profit before taxation"], priority=9),
-    "Tax Expense": PatternDef("ProfitLoss", ["tax expense", "income tax expense", "provision for tax", "income tax", "current tax", "deferred tax"], ["deferred tax assets", "deferred tax liabilities", "deferred tax (credit)"], priority=8),
+    # Tax Expense: must map to the TOTAL tax line, not sub-items.
+    # "Current Tax" and "Deferred Tax" are components; "Tax Expenses" / "Tax Expense" is the total.
+    # Exclude sub-item labels to prevent "Current Tax" from taking the slot.
+    "Tax Expense": PatternDef("ProfitLoss", [
+        "tax expense",
+        "tax expenses",
+        "income tax expense",
+        "provision for tax",
+        "total tax expense",
+        "income tax",
+        "tax on income",
+    ], [
+        "deferred tax assets", "deferred tax liabilities", "deferred tax (credit)",
+        "current tax - mat", "current tax mat",      # MAT sub-items
+        "current tax only",                          # prevents bare "current tax" matching
+    ], priority=8),
     "Net Income": PatternDef("ProfitLoss", ["profit after tax", "net income", "profit for the year", "profit for the period", "net profit", "pat", "profit attributable to shareholders", "profit attributable to equity holders"], ["before tax", "minority"], priority=10),
     "Minority Earnings": PatternDef("ProfitLoss", ["profit attributable to minority", "profit attributable to non-controlling", "minority interest in profit"], priority=4),
-    "EPS Basic": PatternDef("ProfitLoss", ["basic eps", "earnings per share (basic)", "basic earnings per share"], priority=5),
-    "EPS Diluted": PatternDef("ProfitLoss", ["diluted eps", "earnings per share (diluted)", "diluted earnings per share"], priority=5),
+    "EPS Basic": PatternDef("ProfitLoss", [
+        "basic eps",
+        "earnings per share (basic)",
+        "basic earnings per share",
+        "earnings per share basic",
+        "earning per share basic",           # Capitaline: singular "Earning"
+        "earning per share - basic",
+        "eps basic",
+    ], priority=5),
+    "EPS Diluted": PatternDef("ProfitLoss", [
+        "diluted eps",
+        "earnings per share (diluted)",
+        "diluted earnings per share",
+        "earnings per share diluted",
+        "earning per share diluted",         # Capitaline: singular "Earning"
+        "earning per share - diluted",
+        "eps diluted",
+    ], priority=5),
     "Dividend": PatternDef("ProfitLoss", ["dividend paid", "dividend per share", "dividends"], ["dividend income", "dividend received"], priority=5),
 
     # ── Cash Flow Statement ──────────────────────────────────────────────────
     "Operating Cash Flow": PatternDef("CashFlow", ["net cash from operating activities", "cash flow from operating activities", "cash generated from operations", "cash generated from used in operations", "cash inflow from operating activities", "net cash generated from operations"], priority=10),
-    "Capital Expenditure": PatternDef("CashFlow", ["purchase of property plant and equipment", "capital expenditure", "capex", "purchase of fixed assets", "purchased of fixed assets", "purchased of fixed asset", "capital expenditure capital wip", "acquisition of property plant and equipment", "purchase of tangible assets", "payment for property plant and equipment"], priority=9),
+    # Capital Expenditure: Capitaline has two relevant CF lines:
+    #   "Capital Expenditure"       — the total capex line (correct)
+    #   "Purchased of Fixed Assets" — PPE component only (sub-total)
+    # "Capital Expenditure" must win. Exact match scores 0.98 for it;
+    # "Purchased of Fixed Assets" also scores 0.98 but appears later in the file.
+    # We raise "capital expenditure" to the top of the list to guarantee priority.
+    "Capital Expenditure": PatternDef("CashFlow", [
+        "capital expenditure",               # Capitaline: total capex line — highest priority
+        "purchase of property plant and equipment",
+        "capex",
+        "purchase of fixed assets",
+        "acquisition of property plant and equipment",
+        "purchase of tangible assets",
+        "payment for property plant and equipment",
+        "capital expenditure capital wip",
+        "purchased of fixed assets",         # Capitaline sub-item — fallback only
+        "purchased of fixed asset",
+    ], priority=9),
     "Investing Cash Flow": PatternDef("CashFlow", ["net cash from investing activities", "cash flow from investing activities", "net cash used in investing activities"], priority=8),
     "Financing Cash Flow": PatternDef("CashFlow", ["net cash from financing activities", "cash flow from financing activities", "net cash used in financing activities"], priority=8),
     "Free Cash Flow": PatternDef("CashFlow", ["free cash flow", "fcf"], priority=6),
@@ -237,8 +318,25 @@ def auto_map_metrics(source_metrics: List[str]) -> Tuple[MappingDict, List[str]]
         for m in match_metric(source, stmt):
             scored.append((source, m.target, m.confidence, METRIC_DEFS[m.target].priority))
 
-    # Sort by confidence desc, then priority desc
-    scored.sort(key=lambda x: (x[2], x[3]), reverse=True)
+    # Sort by confidence desc, then priority desc, then prefer "net" sources over gross
+    def _sort_key(item):
+        source, target, conf, pri = item
+        src_clean = _normalize_text(source.split("::")[-1])
+        # Tiebreaker 1: "net" revenue preferred over gross
+        net_bonus = 0.001 if "net" in src_clean and target == "Revenue" else 0.0
+        # Tiebreaker 2: "capital expenditure" exact label preferred over "purchased of"
+        capex_bonus = 0.001 if src_clean == "capital expenditure" and target == "Capital Expenditure" else 0.0
+        # Tiebreaker 3: total tax preferred over sub-items for Tax Expense target
+        total_tax_bonus = 0.001 if target == "Tax Expense" and any(
+            p in src_clean for p in ["tax expense", "tax expenses", "provision for tax", "income tax expense"]
+        ) else 0.0
+        # Tiebreaker 4: exact "total equity" preferred over "total stockholders equity"
+        # Capitaline has both; the "Total Equity" line includes minority interest and
+        # satisfies the BS identity TA = TL + Total Equity.
+        equity_bonus = 0.002 if src_clean == "total equity" and target == "Total Equity" else 0.0
+        return (conf + net_bonus + capex_bonus + total_tax_bonus + equity_bonus, pri)
+
+    scored.sort(key=_sort_key, reverse=True)
 
     for source, target, conf, _ in scored:
         if source in used_sources or target in used_targets:

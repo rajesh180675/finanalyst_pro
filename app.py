@@ -20,6 +20,9 @@ Tabs:
 import io
 import json
 import math
+import zipfile
+from dataclasses import asdict, is_dataclass
+from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 import pandas as pd
@@ -2007,9 +2010,85 @@ def _render_data_explorer(data, years):
     st.download_button("⬇️ Export All Data (CSV)", data=csv_bytes, file_name="financial_data.csv", mime="text/csv")
 
 
-def _render_debug(pn_result, analysis):
+def _to_jsonable(payload: Any) -> Any:
+    """Convert dataclasses and nested objects into JSON-serializable structures."""
+    if is_dataclass(payload):
+        return asdict(payload)
+    if isinstance(payload, dict):
+        return {str(k): _to_jsonable(v) for k, v in payload.items()}
+    if isinstance(payload, list):
+        return [_to_jsonable(v) for v in payload]
+    if isinstance(payload, tuple):
+        return [_to_jsonable(v) for v in payload]
+    return payload
+
+
+def _build_debug_zip(
+    company_name: str,
+    years: List[str],
+    data: FinancialData,
+    mappings: MappingDict,
+    analysis,
+    pn_result,
+    scoring,
+) -> bytes:
+    """Create a portable debug package for reconciliation and robustness testing."""
+    debug_manifest = {
+        "generated_at_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "company_name": company_name,
+        "years": years,
+        "metric_count": len(data),
+        "mapping_count": len(mappings),
+        "analysis_version": "v9",
+    }
+    detailed_matches = get_detailed_matches(sorted(data.keys()))
+    coverage = get_pattern_coverage(mappings)
+
+    files = {
+        "manifest.json": debug_manifest,
+        "raw_data.json": data,
+        "mappings.json": mappings,
+        "analysis_result.json": _to_jsonable(analysis),
+        "pn_result.json": _to_jsonable(pn_result),
+        "scoring_result.json": _to_jsonable(scoring),
+        "mapping_coverage.json": coverage,
+        "mapping_detailed_matches.json": detailed_matches,
+    }
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name, payload in files.items():
+            zf.writestr(name, json.dumps(_to_jsonable(payload), indent=2, default=str))
+
+    return buffer.getvalue()
+
+
+def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_name):
     """Debug/diagnostics tab."""
     st.markdown("### 🐛 Diagnostics & Debug")
+
+    st.markdown("**📦 Debug Package Export**")
+    st.caption(
+        "Exports the full mapping and analysis flow as a ZIP so it can be shared with "
+        "another LLM or QA system for reconciliation tests."
+    )
+    debug_zip = _build_debug_zip(
+        company_name=company_name,
+        years=years,
+        data=data,
+        mappings=mappings,
+        analysis=analysis,
+        pn_result=pn_result,
+        scoring=scoring,
+    )
+    safe_name = "_".join(company_name.lower().split()) or "company"
+    st.download_button(
+        "⬇️ Download Debug Package (ZIP)",
+        data=debug_zip,
+        file_name=f"{safe_name}_debug_package.zip",
+        mime="application/zip",
+        help="Contains raw inputs, auto-mapping details, diagnostics, and analysis outputs.",
+    )
 
     if pn_result.diagnostics:
         diag = pn_result.diagnostics
@@ -2559,6 +2638,5 @@ elif st.session_state["step"] == "dashboard":
     # TAB 11: DEBUG
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[10]:
-        _render_debug(pn_result, analysis)
-
+        _render_debug(pn_result, analysis, scoring, data, mappings, years, company_name)
 

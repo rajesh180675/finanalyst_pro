@@ -62,23 +62,79 @@ def _get_direct(data: FinancialData, mappings: MappingDict, target: str, year: s
 def _get_capex_fallback(data: FinancialData, year: str) -> Optional[float]:
     """Fallback for CapEx when mapped `Capital Expenditure` row is blank/zero.
 
-    Some providers include a top-level "Capital Expenditure" row with zeros while
-    reporting actual spend under fixed-asset purchase lines.
+    Capitaline exports a top-level "Capital Expenditure" header row that is
+    sometimes zero while the real spend sits under fixed-asset-purchase sub-lines.
+    We scan all CashFlow rows and pick the one with the largest absolute value
+    among all known fixed-asset purchase variants (ordered by specificity).
+
+    Returns the largest-absolute-value non-zero match (most complete line), or None.
     """
-    fallback_tokens = (
-        "purchase of fixed asset",
-        "purchased of fixed asset",
+    # Ordered: most-specific first to avoid accidental matches on generic strings.
+    # Capitalized variants, typos, abbreviations all covered.
+    fallback_tokens: tuple = (
         "purchase of property plant and equipment",
         "purchased of property plant and equipment",
+        "purchase of property, plant and equipment",
+        "purchase of fixed assets",
+        "purchased of fixed assets",          # Capitaline: "Purchased of Fixed Assets"
+        "purchase of fixed asset",
+        "purchased of fixed asset",           # Capitaline singular typo
+        "acquisition of property plant and equipment",
+        "payment for property plant and equipment",
+        "additions to fixed assets",
+        "additions to property plant and equipment",
+        "capital wip",                         # Capitaline: "capital WIP" additions line
+        "capital work in progress",            # CashFlow CWIP spending
+        "purchase of tangible assets",
+        "purchase of intangible assets",
+        "capex",
     )
 
+    best: Optional[float] = None
+    best_abs: float = 0.0
     for key, values in data.items():
         if not key.startswith("CashFlow::"):
             continue
         metric = key.split("::", 1)[-1].strip().lower()
+        # Skip the canonical "capital expenditure" row itself (already tried and was zero)
+        if metric == "capital expenditure":
+            continue
         if any(token in metric for token in fallback_tokens):
             raw = values.get(year)
-            if isinstance(raw, (int, float)) and not math.isnan(raw):
+            if isinstance(raw, (int, float)) and not math.isnan(raw) and raw != 0:
+                abs_val = abs(float(raw))
+                # Prefer the largest absolute value (most complete / aggregate line)
+                if abs_val > best_abs:
+                    best = float(raw)
+                    best_abs = abs_val
+    return best
+
+
+def _get_inventory_fallback(data: FinancialData, year: str) -> Optional[float]:
+    """Fallback for Inventory when the mapped row has value=0 (e.g. mapped to a sub-item).
+
+    Capitaline exports the total inventory as "Inventories" or "Total Inventory".
+    If the auto-mapper accidentally mapped a sub-item (e.g. "Raw Materials and Components")
+    which has value=0 for that company, this fallback finds the correct total.
+    """
+    total_tokens = (
+        "inventories",          # exact total line (INDAS)
+        "total inventory",      # Capitaline aggregate total
+        "total inventories",
+    )
+    skip_tokens = (
+        "changes in inventories",       # P&L line, not BS stock
+        "non current portion",
+    )
+    for key, values in data.items():
+        if not key.startswith("BalanceSheet::"):
+            continue
+        metric = key.split("::", 1)[-1].strip().lower()
+        if any(skip in metric for skip in skip_tokens):
+            continue
+        if any(token == metric for token in total_tokens):  # exact match only
+            raw = values.get(year)
+            if isinstance(raw, (int, float)) and not math.isnan(raw) and raw != 0:
                 return float(raw)
     return None
 
@@ -99,6 +155,19 @@ def derive_val(
         return None
 
     direct = _get_direct(data, mappings, target, year)
+
+    # ── Zero-value fallback guards ─────────────────────────────────────────
+    # Some Capitaline header rows export 0 even though sub-lines have real values.
+    # We check specific targets where a zero value from the mapping almost certainly
+    # means the wrong row was mapped or the total row is a zero-placeholder.
+
+    # Inventory: If the mapped row is 0 (sub-item like Raw Materials), try the
+    # total "Inventories" / "Total Inventory" rows from the balance sheet.
+    if target == "Inventory" and (direct is None or direct == 0):
+        inv_fb = _get_inventory_fallback(data, year)
+        if inv_fb is not None:
+            return inv_fb
+
     if direct is not None:
         return direct
 

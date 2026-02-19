@@ -455,8 +455,245 @@ class TestMatchMetric:
         targets = [m.target for m in matches]
         assert "Income Before Tax" in targets
 
+    # ── Session 5 — Exhaustive Capitaline Label Regression Tests ─────────────
 
-class TestAutoMapMetrics:
+    def test_amortisation_intangible_assets_maps_depreciation(self):
+        """Capitaline IND-AS: 'Amortisation of Intangible Assets' → Depreciation."""
+        matches = match_metric("ProfitLoss::Amortisation of Intangible Assets", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Depreciation" in targets, "Amortisation of Intangible Assets must map to Depreciation"
+
+    def test_depreciation_for_current_year_maps_depreciation(self):
+        matches = match_metric("ProfitLoss::Depreciation for the current year", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Depreciation" in targets
+
+    def test_depreciation_on_tangible_assets_maps_depreciation(self):
+        matches = match_metric("ProfitLoss::Depreciation on Tangible Assets", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Depreciation" in targets
+
+    def test_amotisation_borrowing_costs_typo_maps_interest(self):
+        """Capitaline has a typo: 'Amotisation of Borrowing Costs' (missing 'r')."""
+        matches = match_metric("ProfitLoss::Amotisation of Borrowing Costs", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Interest Expense" in targets, "Capitaline typo 'Amotisation' must still map to Interest Expense"
+
+    def test_purchases_raw_material_maps_cogs(self):
+        """Capitaline: 'Purchases of Raw Material' → Cost of Goods Sold."""
+        matches = match_metric("ProfitLoss::Purchases of Raw Material", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Cost of Goods Sold" in targets
+
+    def test_add_purchase_direct_cost_maps_cogs(self):
+        """Capitaline older format: 'Add Purchase & Direct Cost' → Cost of Goods Sold."""
+        matches = match_metric("ProfitLoss::Add Purchase & Direct Cost", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Cost of Goods Sold" in targets
+
+    def test_manufacturing_direct_expenses_slash_maps_cogs(self):
+        """Capitaline: 'Manufacturing / Direct Expenses' (with slash) → Cost of Goods Sold."""
+        matches = match_metric("ProfitLoss::Manufacturing / Direct Expenses", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Cost of Goods Sold" in targets
+
+    def test_directors_remuneration_maps_employee(self):
+        matches = match_metric("ProfitLoss::Directors Remuneration", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Employee Expenses" in targets
+
+    def test_contributions_provident_fund_maps_employee(self):
+        matches = match_metric("ProfitLoss::Contributions to Provident and Other Fund", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Employee Expenses" in targets
+
+    def test_vrs_compensation_maps_employee(self):
+        matches = match_metric("ProfitLoss::VRS Compensation", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Employee Expenses" in targets
+
+    def test_share_based_payments_maps_employee(self):
+        matches = match_metric("ProfitLoss::Share-Based Payments", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Employee Expenses" in targets
+
+    def test_interest_on_bonds_maps_interest_expense(self):
+        matches = match_metric("ProfitLoss::Interest on Bonds and Debentures", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Interest Expense" in targets
+
+    def test_interest_on_commercial_paper_maps_interest_expense(self):
+        matches = match_metric("ProfitLoss::Interest on Commercial Paper", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Interest Expense" in targets
+
+    def test_financial_charges_amortised_cost_maps_interest_expense(self):
+        matches = match_metric(
+            "ProfitLoss::Financial Charges on Financial Liabilities at Amortised Cost", "ProfitLoss"
+        )
+        targets = [m.target for m in matches]
+        assert "Interest Expense" in targets
+
+    def test_profit_attributable_ordinary_shareholders_maps_net_income(self):
+        matches = match_metric(
+            "ProfitLoss::Profit Attributable to Ordinary Shareholders", "ProfitLoss"
+        )
+        targets = [m.target for m in matches]
+        assert "Net Income" in targets
+
+    def test_profit_loss_continuing_ops_maps_net_income(self):
+        matches = match_metric(
+            "ProfitLoss::Profit/(Loss) for the period from Continuing Operations", "ProfitLoss"
+        )
+        targets = [m.target for m in matches]
+        assert "Net Income" in targets
+
+    def test_changes_in_inventories_full_label_maps_inventory(self):
+        """Full Capitaline IND-AS label for inventory change line."""
+        matches = match_metric(
+            "ProfitLoss::Changes in Inventories of Finished Goods, Work-in-Progress and Stock-in-Trade",
+            "ProfitLoss",
+        )
+        targets = [m.target for m in matches]
+        assert "Changes in Inventory" in targets
+
+    def test_pbit_does_not_map_exceptional_items(self):
+        """Anti-regression: 'Profit Before Exceptional Items and Tax' must NOT map to Exceptional Items."""
+        matches = match_metric("ProfitLoss::Profit Before Exceptional Items and Tax", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Exceptional Items" not in targets, (
+            "PBIT label contains 'exceptional items' but must never map to the Exceptional Items target"
+        )
+
+    def test_non_controlling_interests_pl_maps_minority_earnings(self):
+        matches = match_metric("ProfitLoss::Non-Controlling Interests", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Minority Earnings" in targets
+
+    def test_cash_generated_slash_used_maps_operating_cf(self):
+        """Exact Capitaline label with slash: 'Cash Generated from/(used in) Operations'."""
+        matches = match_metric("CashFlow::Cash Generated from/(used in) Operations", "CashFlow")
+        targets = [m.target for m in matches]
+        assert "Operating Cash Flow" in targets
+
+    def test_proceed_from_bank_borrowings_maps_proceeds(self):
+        matches = match_metric("CashFlow::Proceed from Bank Borrowings", "CashFlow")
+        targets = [m.target for m in matches]
+        assert "Proceeds from Borrowing" in targets
+
+    def test_proceed_from_zero_other_long_term_capitaline_typo(self):
+        """Capitaline typo: 'Proceed from 0ther Long Term Borrowings' (zero instead of 'O')."""
+        matches = match_metric("CashFlow::Proceed from 0ther Long Term Borrowings", "CashFlow")
+        targets = [m.target for m in matches]
+        assert "Proceeds from Borrowing" in targets
+
+    def test_proceed_short_tem_borrowings_capitaline_typo(self):
+        """Capitaline typo: 'Proceed from Short Tem Borrowings' ('Tem' instead of 'Term')."""
+        matches = match_metric("CashFlow::Proceed from Short Tem Borrowings", "CashFlow")
+        targets = [m.target for m in matches]
+        assert "Proceeds from Borrowing" in targets
+
+    def test_of_long_tem_borrowings_maps_debt_repayment(self):
+        """Capitaline truncated+typo label: 'Of the Long Tem Borrowings' → Debt Repayment."""
+        matches = match_metric("CashFlow::Of the Long Tem Borrowings", "CashFlow")
+        targets = [m.target for m in matches]
+        assert "Debt Repayment" in targets
+
+    def test_on_redemption_debenture_maps_debt_repayment(self):
+        matches = match_metric("CashFlow::On Redemption of Debenture", "CashFlow")
+        targets = [m.target for m in matches]
+        assert "Debt Repayment" in targets
+
+    def test_dividend_paid_bare_maps_dividends_paid(self):
+        matches = match_metric("CashFlow::Dividend Paid", "CashFlow")
+        targets = [m.target for m in matches]
+        assert "Dividends Paid" in targets
+
+    def test_net_value_rou_maps_right_of_use(self):
+        """Capitaline: 'Net Value of Rights Use Assets' → Right of Use Assets."""
+        matches = match_metric("BalanceSheet::Net Value of Rights Use Assets", "BalanceSheet")
+        targets = [m.target for m in matches]
+        assert "Right of Use Assets" in targets
+
+    def test_net_deferred_tax_assets_maps_dta(self):
+        matches = match_metric("BalanceSheet::Net Deferred Tax Assets", "BalanceSheet")
+        targets = [m.target for m in matches]
+        assert "Deferred Tax Assets" in targets
+
+    def test_income_tax_liability_maps_current_tax_liabilities(self):
+        matches = match_metric("BalanceSheet::Income Tax Liability", "BalanceSheet")
+        targets = [m.target for m in matches]
+        assert "Current Tax Liabilities" in targets
+
+    def test_net_property_plant_equipment_maps_ppe(self):
+        """Capitaline: 'Net Property, plant and equipment' → Property Plant Equipment."""
+        matches = match_metric("BalanceSheet::Net Property, plant and equipment", "BalanceSheet")
+        targets = [m.target for m in matches]
+        assert "Property Plant Equipment" in targets
+
+    def test_investments_subsidiaries_associates_jv_maps_lt_investments(self):
+        matches = match_metric(
+            "BalanceSheet::Investments in Subsidiaries, Associates and Joint venture", "BalanceSheet"
+        )
+        targets = [m.target for m in matches]
+        assert "Long-term Investments" in targets
+
+    def test_assets_classified_held_for_sale_maps_assets_hfs(self):
+        matches = match_metric("BalanceSheet::Assets Classified as Held for Sale", "BalanceSheet")
+        targets = [m.target for m in matches]
+        assert "Assets Held for Sale" in targets
+
+    def test_bank_balances_other_than_cash_full_label(self):
+        matches = match_metric(
+            "BalanceSheet::Bank Balances Other Than Cash and Cash Equivalents", "BalanceSheet"
+        )
+        targets = [m.target for m in matches]
+        assert "Bank Balances" in targets
+
+    def test_liabilities_directly_associated_held_for_sale(self):
+        matches = match_metric(
+            "BalanceSheet::Liabilities Directly Associated with Assets Classified as Held for Sale",
+            "BalanceSheet",
+        )
+        targets = [m.target for m in matches]
+        assert "Liabilities Held for Sale" in targets
+
+    def test_total_assets_beats_equity_and_liabilities_in_automapper(self):
+        """Anti-regression: 'Total Assets' must map to Total Assets, not 'Total Equity and Liabilities'."""
+        sources = [
+            "BalanceSheet::Total Assets",
+            "BalanceSheet::Total Equity and Liabilities",
+        ]
+        mappings, _ = auto_map_metrics(sources)
+        ta_src = next((s for s, t in mappings.items() if t == "Total Assets"), None)
+        assert ta_src is not None, "Total Assets target must be mapped"
+        assert "Total Assets" in ta_src, (
+            f"'Total Assets' row must win the Total Assets slot, but got '{ta_src}'"
+        )
+
+    def test_capex_fallback_skips_zero_header_returns_subline(self, sample_data, sample_mappings):
+        """When Capital Expenditure header row is zero, fallback to Purchased of Fixed Assets."""
+        import copy
+        data = copy.deepcopy(sample_data)
+        mappings = copy.deepcopy(sample_mappings)
+        # Simulate Capitaline zero-header row
+        data["CashFlow::Capital Expenditure"] = {
+            "202003": 0, "202103": 0, "202203": 0, "202303": 0,
+        }
+        data["CashFlow::Purchased of Fixed Assets"] = {
+            "202003": -110000, "202103": -120000, "202203": -150000, "202303": -170000,
+        }
+        mappings["CashFlow::Capital Expenditure"] = "Capital Expenditure"
+        from fin_platform.analyzer import analyze_financials
+        r = analyze_financials(data, mappings)
+        capex = r.fcf.get("Capital Expenditure", {})
+        assert capex, "CapEx must be non-empty when sub-line has values"
+        assert capex.get("202003") == pytest.approx(110000), (
+            "CapEx fallback must return absolute value from Purchased of Fixed Assets"
+        )
+
+
+
     def test_maps_all_core_targets(self, sample_data, sample_mappings):
         sources = list(sample_data.keys())
         mappings, unmapped = auto_map_metrics(sources)

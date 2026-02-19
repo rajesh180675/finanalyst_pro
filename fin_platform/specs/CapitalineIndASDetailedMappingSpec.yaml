@@ -1,4 +1,5 @@
 version: 2
+version: 1
 name: CapitalineIndASDetailedMappingSpec
 principles:
   - reject_bare_total: true
@@ -36,6 +37,24 @@ balance_sheet:
     hybrids:
       - ["Hybrid Perpetual Securities"]
   deferred_tax_liability_aliases: ["Deferred Tax Liabilities (Net)", "Deferred Tax Liability"]
+balance_sheet:
+  total_assets_aliases: ["Total Assets"]
+  equity_aliases: ["Total Stockholders’ Equity", "Total Equity"]
+  minority_interest_aliases: ["Minority Interest"]
+  financial_assets:
+    - ["Cash and Cash Equivalents"]
+    - ["Bank Balances Other Than Cash and Cash Equivalents"]
+    - ["Current Investments"]
+    - ["Investments - Long-term"]
+    - ["Others Financial Assets - Short-term"]
+    - ["Others Financial Assets - Long-term"]
+  financial_obligations:
+    - ["Long Term Borrowings"]
+    - ["Short Term Borrowings"]
+    - ["Lease Liabilities"]
+    - ["Others Financial Liabilities - Long-term"]
+    - ["Others Financial Liabilities - Short-term"]
+    - ["Hybrid Perpetual Securities"]
 income_statement:
   sales_aliases:
     - "Revenue From Operations(Net)"
@@ -48,6 +67,7 @@ income_statement:
   finance_income_aliases: ["Interest Income", "Finance Income", "Interest Received (P&L)"]
   tax_aliases: ["Tax Expense"]
   pbt_aliases: ["Profit Before Tax", "Income Before Tax"]
+  finance_income_aliases: ["Interest Income", "Finance Income", "Interest Received"]
   unusual_operating_aliases:
     - "Exceptional Items Before Tax"
     - "Extraordinary Items Before Tax"
@@ -71,3 +91,6 @@ valuation:
   residual_earnings_continuing_values: ["CV1", "CV2", "CV3"]
   residual_operating_continuing_values: ["CV01", "CV02", "CV03"]
   confidence_threshold_default: 70
+valuation:
+  residual_earnings_continuing_values: ["CV1", "CV2", "CV3"]
+  residual_operating_continuing_values: ["CV01", "CV02", "CV03"]

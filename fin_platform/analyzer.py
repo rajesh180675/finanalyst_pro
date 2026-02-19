@@ -59,6 +59,30 @@ def _get_direct(data: FinancialData, mappings: MappingDict, target: str, year: s
     return None
 
 
+def _get_capex_fallback(data: FinancialData, year: str) -> Optional[float]:
+    """Fallback for CapEx when mapped `Capital Expenditure` row is blank/zero.
+
+    Some providers include a top-level "Capital Expenditure" row with zeros while
+    reporting actual spend under fixed-asset purchase lines.
+    """
+    fallback_tokens = (
+        "purchase of fixed asset",
+        "purchased of fixed asset",
+        "purchase of property plant and equipment",
+        "purchased of property plant and equipment",
+    )
+
+    for key, values in data.items():
+        if not key.startswith("CashFlow::"):
+            continue
+        metric = key.split("::", 1)[-1].strip().lower()
+        if any(token in metric for token in fallback_tokens):
+            raw = values.get(year)
+            if isinstance(raw, (int, float)) and not math.isnan(raw):
+                return float(raw)
+    return None
+
+
 def derive_val(
     data: FinancialData,
     mappings: MappingDict,
@@ -1018,6 +1042,8 @@ def penman_nissim_analysis(
     for y in years:
         ocf = g("Operating Cash Flow", y)
         capex_raw = g("Capital Expenditure", y)
+        if capex_raw is None or abs(capex_raw) < 1e-9:
+            capex_raw = _get_capex_fallback(data, y)
         capex = abs(capex_raw) if capex_raw is not None else None
         ie = g("Interest Expense", y) or 0.0
 

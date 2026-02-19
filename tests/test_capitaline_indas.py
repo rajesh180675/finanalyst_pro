@@ -3,6 +3,7 @@ import pytest
 from fin_platform.capitaline_indas import (
     CapitalineIndASConfig,
     recast_period,
+    compute_capitaline_indas,
     residual_earnings,
     residual_operating_income,
 )
@@ -21,6 +22,7 @@ def _sample_data():
         "BalanceSheet::Long Term Borrowings": {"202303": 280.0, "202403": 300.0},
         "BalanceSheet::Short Term Borrowings": {"202303": 60.0, "202403": 80.0},
         "BalanceSheet::Others Financial Liabilities - Short-term": {"202303": 38.0, "202403": 50.0},
+        "BalanceSheet::Deferred Tax Liabilities (Net)": {"202303": 12.0, "202403": 15.0},
         "ProfitLoss::Revenue From Operations(Net)": {"202303": 900.0, "202403": 980.0},
         "ProfitLoss::Total Comprehensive Income for the Year": {"202303": 100.0, "202403": 120.0},
         "ProfitLoss::Non-Controlling Interests": {"202303": 5.0, "202403": 6.0},
@@ -47,6 +49,14 @@ def test_finance_income_fallback_uses_cashflow_signals():
     out = recast_period(_sample_data(), "202403", None, CapitalineIndASConfig())
     assert out["FinanceIncome"] == pytest.approx(6.0)
     assert out["FinanceIncomeConfidence"] == "medium"
+
+
+def test_compute_capitaline_indas_returns_confidence_and_periods():
+    result = compute_capitaline_indas(_sample_data(), CapitalineIndASConfig())
+    assert result["separation_confidence_score"] <= 100
+    assert result["separation_confidence_score"] >= 0
+    assert set(result["years"]) == {"202303", "202403"}
+    assert "202403" in result["periods"]
 
 
 def test_residual_valuation_functions_run():

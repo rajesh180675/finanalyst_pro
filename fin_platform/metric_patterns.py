@@ -116,10 +116,16 @@ METRIC_DEFS: Dict[str, PatternDef] = {
         "cost of revenue",
         "direct material cost",
         "material cost",
+        "manufacturing direct expenses",
+        "total manufacturing direct expenses",
+        "consumption of stores and spare parts",
+        "power oil fuel",
+        "direct labour charges",
+        "job work processing charges",
     ], priority=8),
-    "Employee Expenses": PatternDef("ProfitLoss", ["employee benefit expense", "employee benefits", "employee expenses", "employee benefits salaries other staff cost", "staff costs", "personnel expenses", "wages and salaries"], priority=7),
+    "Employee Expenses": PatternDef("ProfitLoss", ["employee benefit expense", "employee benefits", "employee expenses", "employee benefits salaries other staff cost", "staff costs", "personnel expenses", "wages and salaries", "salaries and incentives", "staff welfare expenses", "retirement benefits expense", "other employee benefit"], priority=7),
     "Depreciation": PatternDef("ProfitLoss", ["depreciation", "amortization", "depreciation and amortisation", "depreciation and amortization", "d&a"], ["accumulated"], priority=7),
-    "Interest Expense": PatternDef("ProfitLoss", ["finance costs", "interest expense", "interest charges", "borrowing costs", "financial expenses", "total interest expenses", "interest on bank borrowings", "interest on term fixed loans"], priority=8),
+    "Interest Expense": PatternDef("ProfitLoss", ["finance costs", "finance cost", "interest expense", "interest charges", "borrowing costs", "financial expenses", "total interest expenses", "interest on bank borrowings", "interest on term fixed loans", "interest on working capital loans", "interest and finance charges on financial liabilities", "other interest expenses", "bank charges", "bill discounting charges"], priority=8),
     "Total Expenses": PatternDef("ProfitLoss", ["total expenses", "total expenditure", "total costs and expenses"], priority=9),
     "Other Expenses": PatternDef("ProfitLoss", ["other expenses", "other operating expenses", "miscellaneous expenses"], ["total", "non-operating"], priority=5),
     "Changes in Inventory": PatternDef("ProfitLoss", ["changes in inventories", "change in inventories", "(increase)/decrease in inventories"], priority=5),
@@ -129,7 +135,7 @@ METRIC_DEFS: Dict[str, PatternDef] = {
     # ── Profit & Loss – Profit ──────────────────────────────────────────────
     "Gross Profit": PatternDef("ProfitLoss", ["gross profit", "gross margin"], priority=7),
     "Operating Income": PatternDef("ProfitLoss", ["operating profit", "operating income", "profit from operations", "ebit"], ["before", "interest", "tax", "d&a"], priority=8),
-    "Income Before Tax": PatternDef("ProfitLoss", ["profit before tax", "income before tax", "earnings before tax", "pbt", "profit before taxation"], priority=9),
+    "Income Before Tax": PatternDef("ProfitLoss", ["profit before tax", "income before tax", "earnings before tax", "pbt", "profit before taxation", "profit before exceptional items and tax", "profit before extraordinary items and tax"], priority=9),
     # Tax Expense: must map to the TOTAL tax line, not sub-items.
     # "Current Tax" and "Deferred Tax" are components; "Tax Expenses" / "Tax Expense" is the total.
     # Exclude sub-item labels to prevent "Current Tax" from taking the slot.
@@ -141,6 +147,8 @@ METRIC_DEFS: Dict[str, PatternDef] = {
         "total tax expense",
         "income tax",
         "tax on income",
+        "other tax adjustments",
+        "fringe benefits tax",
     ], [
         "deferred tax assets", "deferred tax liabilities", "deferred tax (credit)",
         "current tax - mat", "current tax mat",      # MAT sub-items

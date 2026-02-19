@@ -429,6 +429,11 @@ class TestMatchMetric:
         assert matches
         assert matches[0].target == "Capital Expenditure"
 
+    def test_capex_purchase_fixed_assets_variant(self):
+        matches = match_metric("CashFlow::Purchase of Fixed Assets", "CashFlow")
+        assert matches
+        assert matches[0].target == "Capital Expenditure"
+
     def test_operating_cashflow_used_in_operations_variant(self):
         matches = match_metric("CashFlow::Cash Generated from/(used in) Operations", "CashFlow")
         targets = [m.target for m in matches]
@@ -438,6 +443,16 @@ class TestMatchMetric:
         matches = match_metric("ProfitLoss::Revenue From Operations(Net)", "ProfitLoss")
         targets = [m.target for m in matches]
         assert "Revenue" in targets
+
+    def test_finance_cost_singular_variant_maps_interest(self):
+        matches = match_metric("ProfitLoss::Finance Cost", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Interest Expense" in targets
+
+    def test_pbit_exceptional_variant_maps_income_before_tax(self):
+        matches = match_metric("ProfitLoss::Profit Before Exceptional Items and Tax", "ProfitLoss")
+        targets = [m.target for m in matches]
+        assert "Income Before Tax" in targets
 
 
 class TestAutoMapMetrics:

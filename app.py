@@ -22,7 +22,7 @@ import json
 import math
 import zipfile
 from dataclasses import asdict, is_dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
 import pandas as pd
@@ -2094,7 +2094,7 @@ def _build_debug_zip(
 ) -> bytes:
     """Create a portable debug package for reconciliation and robustness testing."""
     debug_manifest = {
-        "generated_at_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "company_name": company_name,
         "years": years,
         "metric_count": len(data),

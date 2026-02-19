@@ -90,6 +90,7 @@ class AnalysisResult:
     trends: Dict[str, TrendData] = field(default_factory=dict)
     anomalies: Optional[AnomalyData] = None
     working_capital: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    fcf: Dict[str, Dict[str, float]] = field(default_factory=dict)
     dupont: Optional[DuPontResult] = None
     insights: List[str] = field(default_factory=list)
     quality_score: float = 0.0

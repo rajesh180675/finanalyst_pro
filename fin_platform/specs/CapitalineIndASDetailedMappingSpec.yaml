@@ -1,0 +1,73 @@
+version: 2
+name: CapitalineIndASDetailedMappingSpec
+principles:
+  - reject_bare_total: true
+  - liabilities_from_identity: TotalLiabilities = TotalAssets - TotalEquity
+  - prefer_named_totals: true
+  - compute_oa_as_total_assets_minus_fa: true
+  - compute_ol_as_total_liabilities_minus_fo: true
+balance_sheet:
+  total_assets_aliases: ["Total Assets"]
+  equity_aliases: ["Total Stockholders’ Equity", "Total Stockholders' Equity", "Total Equity"]
+  minority_interest_aliases: ["Minority Interest"]
+  financial_assets:
+    cash_bank:
+      - ["Cash and Cash Equivalents"]
+      - ["Bank Balances Other Than Cash and Cash Equivalents"]
+      - ["Restricted Cash"]
+    investments:
+      - ["Current Investments"]
+      - ["Investments - Long-term"]
+    other_financial_assets:
+      - ["Others Financial Assets - Short-term"]
+      - ["Others Financial Assets - Long-term"]
+      - ["Interest Receivable"]
+      - ["Dividend Receivable"]
+      - ["Derivative Receivables / Forward Contract Receivable"]
+  financial_obligations:
+    borrowings:
+      - ["Long Term Borrowings"]
+      - ["Short Term Borrowings"]
+    lease:
+      - ["Lease Liabilities"]
+    other_financial_liabilities:
+      - ["Others Financial Liabilities - Long-term"]
+      - ["Others Financial Liabilities - Short-term"]
+    hybrids:
+      - ["Hybrid Perpetual Securities"]
+  deferred_tax_liability_aliases: ["Deferred Tax Liabilities (Net)", "Deferred Tax Liability"]
+income_statement:
+  sales_aliases:
+    - "Revenue From Operations(Net)"
+    - "Revenue From Operations"
+    - "Total Revenue"
+  comprehensive_income_aliases: ["Total Comprehensive Income for the Year"]
+  nci_income_aliases: ["Non-Controlling Interests"]
+  preference_dividend_aliases: ["Preference Dividend"]
+  finance_cost_aliases: ["Finance Cost", "Finance Costs"]
+  finance_income_aliases: ["Interest Income", "Finance Income", "Interest Received (P&L)"]
+  tax_aliases: ["Tax Expense"]
+  pbt_aliases: ["Profit Before Tax", "Income Before Tax"]
+  unusual_operating_aliases:
+    - "Exceptional Items Before Tax"
+    - "Extraordinary Items Before Tax"
+    - "Discontinued Operations"
+  oci_aliases:
+    - "Other Comprehensive Income That Will Not Be Reclassified to Profit Or Loss"
+    - "Other Comprehensive Income That Will Be Reclassified to Profit Or Loss"
+    - "Other Comprehensive Income"
+  other_items_aliases:
+    - "Share of profit/loss of associates"
+    - "Equity accounted income"
+cash_flow:
+  interest_received_aliases: ["Interest Received"]
+  dividend_received_aliases: ["Dividend Received"]
+  pl_sale_invest_aliases: ["P/L on Sales of Invest"]
+  cfo_aliases: ["Net Cash from Operating Activities"]
+  capex_aliases: ["Purchased of Fixed Assets", "Purchase of Property Plant and Equipment"]
+  dividend_paid_aliases: ["Dividend Paid"]
+  equity_issue_aliases: ["Proceeds from Issue of shares (incl share premium)"]
+valuation:
+  residual_earnings_continuing_values: ["CV1", "CV2", "CV3"]
+  residual_operating_continuing_values: ["CV01", "CV02", "CV03"]
+  confidence_threshold_default: 70

@@ -1,0 +1,45 @@
+version: 1
+name: CapitalineIndASDetailedMappingSpec
+principles:
+  - reject_bare_total: true
+  - liabilities_from_identity: TotalLiabilities = TotalAssets - TotalEquity
+  - prefer_named_totals: true
+balance_sheet:
+  total_assets_aliases: ["Total Assets"]
+  equity_aliases: ["Total Stockholders’ Equity", "Total Equity"]
+  minority_interest_aliases: ["Minority Interest"]
+  financial_assets:
+    - ["Cash and Cash Equivalents"]
+    - ["Bank Balances Other Than Cash and Cash Equivalents"]
+    - ["Current Investments"]
+    - ["Investments - Long-term"]
+    - ["Others Financial Assets - Short-term"]
+    - ["Others Financial Assets - Long-term"]
+  financial_obligations:
+    - ["Long Term Borrowings"]
+    - ["Short Term Borrowings"]
+    - ["Lease Liabilities"]
+    - ["Others Financial Liabilities - Long-term"]
+    - ["Others Financial Liabilities - Short-term"]
+    - ["Hybrid Perpetual Securities"]
+income_statement:
+  sales_aliases:
+    - "Revenue From Operations(Net)"
+    - "Revenue From Operations"
+    - "Total Revenue"
+  comprehensive_income_aliases: ["Total Comprehensive Income for the Year"]
+  nci_income_aliases: ["Non-Controlling Interests"]
+  preference_dividend_aliases: ["Preference Dividend"]
+  finance_cost_aliases: ["Finance Cost", "Finance Costs"]
+  finance_income_aliases: ["Interest Income", "Finance Income", "Interest Received"]
+  unusual_operating_aliases:
+    - "Exceptional Items Before Tax"
+    - "Extraordinary Items Before Tax"
+    - "Discontinued Operations"
+cash_flow:
+  interest_received_aliases: ["Interest Received"]
+  dividend_received_aliases: ["Dividend Received"]
+  pl_sale_invest_aliases: ["P/L on Sales of Invest"]
+valuation:
+  residual_earnings_continuing_values: ["CV1", "CV2", "CV3"]
+  residual_operating_continuing_values: ["CV01", "CV02", "CV03"]

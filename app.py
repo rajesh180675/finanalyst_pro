@@ -29,6 +29,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 from fin_platform.types import (
     FinancialData, MappingDict, PNOptions,
@@ -134,6 +135,17 @@ st.markdown("""
     /* Streamlit overrides */
     div.stButton > button { border-radius: 8px; font-weight: 500; }
     .stTabs [data-baseweb="tab"] { font-size: 0.82rem; padding: 0.5rem 1rem; }
+    .stTabs [role="tablist"] {
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        scrollbar-width: thin;
+    }
+    .stTabs [role="tablist"]::-webkit-scrollbar { height: 6px; }
+    .stTabs [role="tablist"]::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 999px;
+    }
     [data-testid="metric-container"] { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.8rem; }
 </style>
 """, unsafe_allow_html=True)
@@ -2063,6 +2075,24 @@ def _build_debug_zip(
     return buffer.getvalue()
 
 
+def _build_compact_input_payload(company_name: str, years: List[str], data: FinancialData) -> str:
+    """Build a compact payload with labels + values for easy LLM sharing."""
+    compact_rows = []
+    for metric in sorted(data.keys()):
+        series = data[metric]
+        compact_rows.append([
+            metric,
+            [series.get(y) for y in years],
+        ])
+    payload = {
+        "v": 1,
+        "company": company_name,
+        "years": years,
+        "metrics": compact_rows,
+    }
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+
 def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_name):
     """Debug/diagnostics tab."""
     st.markdown("### 🐛 Diagnostics & Debug")
@@ -2088,6 +2118,41 @@ def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_n
         file_name=f"{safe_name}_debug_package.zip",
         mime="application/zip",
         help="Contains raw inputs, auto-mapping details, diagnostics, and analysis outputs.",
+    )
+
+    st.markdown("**📋 Compact Input Snapshot (LLM Prompt Copy)**")
+    compact_payload = _build_compact_input_payload(company_name, years, data)
+    st.caption(
+        "Copy all input metric labels + values in a compact JSON payload to paste into another LLM prompt."
+    )
+    st.code(compact_payload, language="json")
+    components.html(
+        f"""
+        <button id=\"copyCompactPayload\" style=\"
+            border:1px solid #cbd5e1;
+            border-radius:8px;
+            background:#f8fafc;
+            padding:0.45rem 0.85rem;
+            cursor:pointer;
+            font-size:0.9rem;
+        \">📋 Copy Compact Payload to Clipboard</button>
+        <span id=\"copyStatus\" style=\"margin-left:0.6rem;color:#16a34a;font-size:0.88rem;\"></span>
+        <script>
+            const payload = {json.dumps(compact_payload)};
+            const btn = document.getElementById('copyCompactPayload');
+            const status = document.getElementById('copyStatus');
+            btn.addEventListener('click', async () => {{
+                try {{
+                    await navigator.clipboard.writeText(payload);
+                    status.innerText = 'Copied!';
+                }} catch (e) {{
+                    status.innerText = 'Clipboard blocked by browser settings.';
+                    status.style.color = '#b45309';
+                }}
+            }});
+        </script>
+        """,
+        height=52,
     )
 
     if pn_result.diagnostics:
@@ -2567,9 +2632,9 @@ elif st.session_state["step"] == "dashboard":
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
     tabs = st.tabs([
-        "🏠 Overview", "📐 Penman-Nissim", "📊 Ratios", "📈 Trends",
+        "🏠 Overview", "🐛 Debug", "📐 Penman-Nissim", "📊 Ratios", "📈 Trends",
         "🛡️ Scoring", "💰 Valuation", "💵 FCF & Value Drivers",
-        "📋 Earnings Quality", "🗺️ Mappings", "🔍 Data Explorer", "🐛 Debug",
+        "📋 Earnings Quality", "🗺️ Mappings", "🔍 Data Explorer",
     ])
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -2579,64 +2644,63 @@ elif st.session_state["step"] == "dashboard":
         _render_overview(analysis, pn_result, scoring, years, data, mappings)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 2: PENMAN-NISSIM
+    # TAB 2: DEBUG
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[1]:
+        _render_debug(pn_result, analysis, scoring, data, mappings, years, company_name)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 3: PENMAN-NISSIM
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[2]:
         _render_penman_nissim(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 3: RATIOS (enhanced with CCC)
+    # TAB 4: RATIOS (enhanced with CCC)
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[2]:
+    with tabs[3]:
         _render_ratios_with_ccc(analysis, pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 4: TRENDS
+    # TAB 5: TRENDS
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[3]:
+    with tabs[4]:
         _render_trends(analysis, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 5: SCORING (enhanced with Z″)
+    # TAB 6: SCORING (enhanced with Z″)
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[4]:
+    with tabs[5]:
         _render_scoring_enhanced(scoring, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 6: VALUATION + MEAN REVERSION PANEL
+    # TAB 7: VALUATION + MEAN REVERSION PANEL
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[5]:
+    with tabs[6]:
         _render_valuation(pn_result, years)
         _render_mean_reversion(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 7: FCF & VALUE DRIVERS + CAPITAL ALLOCATION
+    # TAB 8: FCF & VALUE DRIVERS + CAPITAL ALLOCATION
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[6]:
+    with tabs[7]:
         _render_fcf(pn_result, years)
         _render_capital_allocation(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 8: EARNINGS QUALITY (new standalone dashboard)
+    # TAB 9: EARNINGS QUALITY (new standalone dashboard)
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[7]:
+    with tabs[8]:
         _render_earnings_quality(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 9: MAPPINGS
+    # TAB 10: MAPPINGS
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[8]:
+    with tabs[9]:
         _render_mappings(data, mappings, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 10: DATA EXPLORER
-    # ──────────────────────────────────────────────────────────────────────────
-    with tabs[9]:
-        _render_data_explorer(data, years)
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # TAB 11: DEBUG
+    # TAB 11: DATA EXPLORER
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[10]:
-        _render_debug(pn_result, analysis, scoring, data, mappings, years, company_name)
-
+        _render_data_explorer(data, years)

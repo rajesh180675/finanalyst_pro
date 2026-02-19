@@ -9,6 +9,7 @@ accrual quality, edge cases.
 Run:  pytest tests/ -v
 """
 
+import copy
 import math
 import sys
 import os
@@ -806,6 +807,23 @@ class TestPenmanNissimAnalysis:
         # OCF=70000, capex=110000 → FCF=−40000 in 2020
         fcf_2020 = fcf.get("202003")
         assert fcf_2020 == pytest.approx(70000 - 110000)
+
+    def test_capex_fallback_from_fixed_assets_when_capex_zero(self, sample_data, sample_mappings):
+        # Capitaline variant: explicit "Capital Expenditure" row may be present but all zeros,
+        # while the effective capex is recorded under fixed-asset purchase lines.
+        data = copy.deepcopy(sample_data)
+        data["CashFlow::Capital Expenditure"] = {
+            "202003": 0, "202103": 0, "202203": 0, "202303": 0
+        }
+        mappings = dict(sample_mappings)
+        mappings["CashFlow::Capital Expenditure"] = "Capital Expenditure"
+
+        r = penman_nissim_analysis(data, mappings)
+        capex = r.fcf.get("Capital Expenditure", {})
+        fcf = r.fcf.get("Free Cash Flow", {})
+
+        assert capex.get("202003") == pytest.approx(110000)
+        assert fcf.get("202003") == pytest.approx(70000 - 110000)
 
     # ── Academic Extensions ──────────────────────────────────────────────────
     def test_reoi_computed(self, sample_data, sample_mappings):

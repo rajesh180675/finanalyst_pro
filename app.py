@@ -42,6 +42,7 @@ from fin_platform.metric_patterns import (
 from fin_platform.analyzer import (
     get_years, analyze_financials, penman_nissim_analysis, calculate_scores,
 )
+from fin_platform.capitaline_indas import compute_capitaline_indas
 from fin_platform.formatting import (
     format_indian_number, format_percent, format_ratio, year_label,
     metric_label, get_zone_color, get_piotroski_color, get_quality_color,
@@ -694,6 +695,53 @@ def _render_penman_nissim(pn_result, years):
         _render_nissim_profitability(pn_result, years)
 
 
+
+
+def _render_capitaline_indas_module(data, years):
+    """Dedicated Capitaline Ind AS module view."""
+    st.markdown("### 🧩 Capitaline Ind AS Detailed Module")
+    result = compute_capitaline_indas(data)
+
+    score = result.get("separation_confidence_score", 0)
+    label = result.get("separation_confidence_label", "low")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Separation Confidence", f"{score}/100", delta=label.upper())
+    with col2:
+        st.metric("Periods Processed", len(result.get("years", [])))
+
+    diag = result.get("diagnostics", [])
+    if diag:
+        with st.expander("Diagnostics"):
+            for d in diag:
+                st.markdown(f"- {d}")
+
+    periods = result.get("periods", {})
+    if not periods:
+        st.info("No recast output available for current dataset.")
+        return
+
+    latest_year = years[-1] if years else sorted(periods.keys())[-1]
+    latest = periods.get(latest_year, {})
+
+    core_rows = []
+    for k in ["TA", "CSE", "MI", "FA", "FO", "OA", "OL", "NOA", "NFO", "Sales", "CNI", "NFE", "OI", "CoreOI", "UOI"]:
+        if k in latest:
+            core_rows.append({"Metric": k, "Value": latest[k]})
+    if core_rows:
+        st.markdown("#### Latest Period Recast")
+        st.dataframe(pd.DataFrame(core_rows), width='stretch', hide_index=True)
+
+    ratio_rows = []
+    for yr in sorted(periods.keys()):
+        rat = periods[yr].get("ratios", {})
+        if rat:
+            row = {"Year": _yl(yr)}
+            row.update({k: v for k, v in rat.items() if k in ["ROCE", "RNOA", "NBC", "SPREAD", "FLEV", "PM", "ATO", "FCF_accounting"]})
+            ratio_rows.append(row)
+    if ratio_rows:
+        st.markdown("#### Ratio Series")
+        st.dataframe(pd.DataFrame(ratio_rows), width='stretch', hide_index=True)
 def _render_nissim_profitability(pn_result, years):
     """
     Renders Nissim (2023) Profitability Analysis tab.
@@ -2632,7 +2680,7 @@ elif st.session_state["step"] == "dashboard":
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
     tabs = st.tabs([
-        "🏠 Overview", "🐛 Debug", "📐 Penman-Nissim", "📊 Ratios", "📈 Trends",
+        "🏠 Overview", "🐛 Debug", "📐 Penman-Nissim", "🧩 Capitaline Ind AS", "📊 Ratios", "📈 Trends",
         "🛡️ Scoring", "💰 Valuation", "💵 FCF & Value Drivers",
         "📋 Earnings Quality", "🗺️ Mappings", "🔍 Data Explorer",
     ])
@@ -2656,51 +2704,57 @@ elif st.session_state["step"] == "dashboard":
         _render_penman_nissim(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 4: RATIOS (enhanced with CCC)
+    # TAB 4: CAPITALINE IND AS MODULE
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[3]:
+        _render_capitaline_indas_module(data, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 5: RATIOS (enhanced with CCC)
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[4]:
         _render_ratios_with_ccc(analysis, pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 5: TRENDS
+    # TAB 6: TRENDS
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[4]:
+    with tabs[5]:
         _render_trends(analysis, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 6: SCORING (enhanced with Z″)
+    # TAB 7: SCORING (enhanced with Z″)
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[5]:
+    with tabs[6]:
         _render_scoring_enhanced(scoring, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 7: VALUATION + MEAN REVERSION PANEL
+    # TAB 8: VALUATION + MEAN REVERSION PANEL
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[6]:
+    with tabs[7]:
         _render_valuation(pn_result, years)
         _render_mean_reversion(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 8: FCF & VALUE DRIVERS + CAPITAL ALLOCATION
+    # TAB 9: FCF & VALUE DRIVERS + CAPITAL ALLOCATION
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[7]:
+    with tabs[8]:
         _render_fcf(pn_result, years)
         _render_capital_allocation(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 9: EARNINGS QUALITY (new standalone dashboard)
+    # TAB 10: EARNINGS QUALITY (new standalone dashboard)
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[8]:
+    with tabs[9]:
         _render_earnings_quality(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 10: MAPPINGS
+    # TAB 11: MAPPINGS
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[9]:
+    with tabs[10]:
         _render_mappings(data, mappings, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 11: DATA EXPLORER
+    # TAB 12: DATA EXPLORER
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[10]:
+    with tabs[11]:
         _render_data_explorer(data, years)

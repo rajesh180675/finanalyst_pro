@@ -303,7 +303,7 @@ with st.sidebar:
         )
 
         st.markdown("---")
-        if st.button("🔄 New Analysis", use_container_width=True):
+        if st.button("🔄 New Analysis", width='stretch'):
             for k in ["step", "data", "mappings", "company_name", "years"]:
                 st.session_state[k] = {"step": "upload", "data": None, "mappings": None, "company_name": "", "years": []}.get(k)
             st.rerun()
@@ -384,7 +384,7 @@ def _render_overview(analysis, pn_result, scoring, years, data, mappings):
             series_to_plot = {}
             if rev_series: series_to_plot["Revenue"] = rev_series
             if ni_series: series_to_plot["Net Income"] = ni_series
-            st.plotly_chart(_build_line(series_to_plot, "Revenue vs Net Income Trend", "Value"), use_container_width=True)
+            st.plotly_chart(_build_line(series_to_plot, "Revenue vs Net Income Trend", "Value"), width='stretch')
 
     with col2:
         # Company type
@@ -480,7 +480,7 @@ def _render_penman_nissim(pn_result, years):
                     rows.append(row)
             if rows:
                 df = pd.DataFrame(rows)
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width='stretch', hide_index=True)
 
             # NOA vs NFA chart
             noa_s = bs.get("Net Operating Assets", {})
@@ -492,7 +492,7 @@ def _render_penman_nissim(pn_result, years):
                 if nfa_s:
                     fig.add_trace(go.Bar(name="NFA", x=[_yl(y) for y in sorted(nfa_s)], y=list(nfa_s[y] for y in sorted(nfa_s)), marker_color="#60a5fa"))
                 fig.update_layout(title="NOA vs NFA", barmode="group", height=280, paper_bgcolor="white", plot_bgcolor="#f8fafc", margin=dict(l=40,r=20,t=40,b=30))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
     # Reformulated Income Statement
     with subtabs[1]:
@@ -514,7 +514,7 @@ def _render_penman_nissim(pn_result, years):
                     rows.append(row)
             if rows:
                 df = pd.DataFrame(rows)
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width='stretch', hide_index=True)
 
             # NOPAT vs Net Income chart
             nopat_s = ris.get("NOPAT", {})
@@ -523,7 +523,7 @@ def _render_penman_nissim(pn_result, years):
                 series = {}
                 if nopat_s: series["NOPAT"] = nopat_s
                 if ni_s: series["Net Income"] = ni_s
-                st.plotly_chart(_build_line(series, "NOPAT vs Net Income"), use_container_width=True)
+                st.plotly_chart(_build_line(series, "NOPAT vs Net Income"), width='stretch')
 
     # PN Ratios
     with subtabs[2]:
@@ -546,7 +546,7 @@ def _render_penman_nissim(pn_result, years):
                     rows.append(row)
             if rows:
                 df = pd.DataFrame(rows)
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width='stretch', hide_index=True)
 
         # RNOA vs ROE chart
         rnoa_s = ratios.get("RNOA %", {})
@@ -555,7 +555,7 @@ def _render_penman_nissim(pn_result, years):
             series = {}
             if rnoa_s: series["RNOA %"] = rnoa_s
             if roe_s: series["ROE %"] = roe_s
-            st.plotly_chart(_build_line(series, "RNOA vs ROE", pct=True), use_container_width=True)
+            st.plotly_chart(_build_line(series, "RNOA vs ROE", pct=True), width='stretch')
 
     # Academic metrics
     with subtabs[3]:
@@ -570,13 +570,13 @@ def _render_penman_nissim(pn_result, years):
                 row["Cumulative ReOI"] = format_indian_number(acad.cumulative_reoi.get(y))
                 row["AEG"] = format_indian_number(acad.aeg.get(y))
                 rows.append(row)
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
             # ReOI chart
             reoi_s = acad.core_reoi if acad.core_reoi else acad.reoi
             if reoi_s:
                 fig = _build_bar(reoi_s, "Residual Operating Income (ReOI)", "Cr")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
             # NOPAT drivers (Shapley)
             if acad.nopat_drivers:
@@ -592,7 +592,7 @@ def _render_penman_nissim(pn_result, years):
                         "Residual": format_indian_number(d.residual),
                     })
                 if driver_rows:
-                    st.dataframe(pd.DataFrame(driver_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(driver_rows), width='stretch', hide_index=True)
 
                     # Waterfall-style stacked bar
                     driver_years = sorted(acad.nopat_drivers.keys())
@@ -610,7 +610,7 @@ def _render_penman_nissim(pn_result, years):
                         paper_bgcolor="white", plot_bgcolor="#f8fafc",
                         margin=dict(l=40,r=20,t=40,b=30),
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
 
     # ROE Decomposition
     with subtabs[4]:
@@ -636,7 +636,7 @@ def _render_penman_nissim(pn_result, years):
                 "✓": "✅" if reconciled == 1 else ("⚠️" if reconciled == 0 else "—"),
             })
         if roe_rows:
-            st.dataframe(pd.DataFrame(roe_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(roe_rows), width='stretch', hide_index=True)
 
     # Accrual Quality
     with subtabs[5]:
@@ -662,7 +662,7 @@ def _render_penman_nissim(pn_result, years):
                     "Op. Accruals": format_indian_number(oa),
                 })
             if aq_rows:
-                st.dataframe(pd.DataFrame(aq_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(aq_rows), width='stretch', hide_index=True)
 
             # Quality tiers explanation
             st.markdown("""
@@ -776,7 +776,7 @@ def _render_nissim_profitability(pn_result, years):
 
             if rows_3f:
                 df_3f = pd.DataFrame(rows_3f)
-                st.dataframe(df_3f, use_container_width=True, hide_index=True)
+                st.dataframe(df_3f, width='stretch', hide_index=True)
 
             # Stability CV comparison
             st.markdown("##### Stability Comparison (Lower CV = More Stable)")
@@ -832,7 +832,7 @@ def _render_nissim_profitability(pn_result, years):
                     "NCI Spread": f"{hier.nci_spread.get(y):.2f}%" if hier.nci_spread.get(y) is not None else "—",
                 })
             if l1_rows:
-                st.dataframe(pd.DataFrame(l1_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(l1_rows), width='stretch', hide_index=True)
 
             st.markdown("---")
 
@@ -853,7 +853,7 @@ def _render_nissim_profitability(pn_result, years):
                     "Status": "✅" if (trans is not None and abs(trans) < 1) else "⚠️",
                 })
             if l2_rows:
-                st.dataframe(pd.DataFrame(l2_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(l2_rows), width='stretch', hide_index=True)
 
             st.markdown("""
             <div style='font-size:0.75rem; color:#64748b; padding:0.4rem;'>
@@ -891,7 +891,7 @@ def _render_nissim_profitability(pn_result, years):
                     "✓": "✅" if status == "ok" else "⚠️",
                 })
             if l3_rows:
-                st.dataframe(pd.DataFrame(l3_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(l3_rows), width='stretch', hide_index=True)
 
             # Reconciliation detail
             if hier.roce_reconciliation:
@@ -908,7 +908,7 @@ def _render_nissim_profitability(pn_result, years):
                             "Gap": f"{r['gap']:.3f}%",
                             "Status": "✅ ok" if r["status"] == "ok" else "⚠️ warn",
                         })
-                    st.dataframe(pd.DataFrame(recon_df_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(recon_df_rows), width='stretch', hide_index=True)
 
     # =========================================================================
     # TAB 3: OPERATING CREDIT DEEP-DIVE
@@ -952,7 +952,7 @@ def _render_nissim_profitability(pn_result, years):
                     "OFR Amplif. (pp)": f"+{impact:.2f}" if (impact is not None and impact >= 0) else (f"{impact:.2f}" if impact is not None else "—"),
                 })
             if oc_rows:
-                st.dataframe(pd.DataFrame(oc_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(oc_rows), width='stretch', hide_index=True)
 
             st.markdown("""
             **Interpretation Guide:**
@@ -985,7 +985,7 @@ def _render_nissim_profitability(pn_result, years):
         if op and op.opm and op.oat and op.ofr:
             with c1:
                 fig_opm = _build_bar(op.opm, "Operating Profit Margin (OPM %)", pct=True)
-                st.plotly_chart(fig_opm, use_container_width=True)
+                st.plotly_chart(fig_opm, width='stretch')
 
             with c2:
                 fig_ofr = _build_bar(
@@ -993,13 +993,13 @@ def _render_nissim_profitability(pn_result, years):
                     "Operations Funding Ratio (OFR %)",
                     pct=True, color="#7c3aed"
                 )
-                st.plotly_chart(fig_ofr, use_container_width=True)
+                st.plotly_chart(fig_ofr, width='stretch')
 
         c3, c4 = st.columns(2)
         if op and op.oat:
             with c3:
                 fig_oat = _build_bar(op.oat, "Operating Asset Turnover (OAT ×)", pct=False, color="#0891b2")
-                st.plotly_chart(fig_oat, use_container_width=True)
+                st.plotly_chart(fig_oat, width='stretch')
 
         if op and op.rnoa_nissim:
             with c4:
@@ -1011,7 +1011,7 @@ def _render_nissim_profitability(pn_result, years):
                     "RNOA vs ROOA Comparison",
                     pct=True,
                 )
-                st.plotly_chart(fig_rnoa_compare, use_container_width=True)
+                st.plotly_chart(fig_rnoa_compare, width='stretch')
 
         # ROCE Hierarchy waterfall if available
         if hier and hier.recurring_roe and hier.rnoa and hier.financial_leverage_effect:
@@ -1023,7 +1023,7 @@ def _render_nissim_profitability(pn_result, years):
             if hier.financial_leverage_effect: hier_multi["FL Effect"] = hier.financial_leverage_effect
 
             fig_hier = _build_line(hier_multi, "ROCE Hierarchy Components (%)", pct=True)
-            st.plotly_chart(fig_hier, use_container_width=True)
+            st.plotly_chart(fig_hier, width='stretch')
 
         # OFR stability scatter
         if op and op.ofr and len(op.ofr) > 1:
@@ -1050,7 +1050,7 @@ def _render_nissim_profitability(pn_result, years):
                 font=dict(size=11, color="#64748b"),
                 xaxis=dict(gridcolor="#e2e8f0"), yaxis=dict(gridcolor="#e2e8f0"),
             )
-            st.plotly_chart(fig_ofr_ts, use_container_width=True)
+            st.plotly_chart(fig_ofr_ts, width='stretch')
 
     # =========================================================================
     # TAB 5: METHODOLOGY
@@ -1193,7 +1193,7 @@ def _render_ccc(pn_result, years):
             "Rec vs Rev Δ (pp)": (f"{'▲' if (rec_gap or 0) > 2 else '▼' if (rec_gap or 0) < -2 else '—'} {rec_gap:.1f}" if rec_gap is not None else "—"),
         })
     if ccc_rows:
-        st.dataframe(pd.DataFrame(ccc_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(ccc_rows), width='stretch', hide_index=True)
 
     st.markdown("""
     <div style='font-size:0.75rem; color:#64748b; padding:0.4rem; background:#f8fafc; border-radius:6px; margin-top:0.3rem;'>
@@ -1208,7 +1208,7 @@ def _render_ccc(pn_result, years):
     if ccc.ccc:
         with c1:
             fig_ccc = _build_bar(ccc.ccc, "Cash Conversion Cycle (Days)", "Days", color="#1e40af")
-            st.plotly_chart(fig_ccc, use_container_width=True)
+            st.plotly_chart(fig_ccc, width='stretch')
     if ccc.dio or ccc.dso or ccc.dpo:
         with c2:
             comp_series = {}
@@ -1216,7 +1216,7 @@ def _render_ccc(pn_result, years):
             if ccc.dso: comp_series["DSO"] = ccc.dso
             if ccc.dpo: comp_series["DPO"] = ccc.dpo
             fig_comp = _build_line(comp_series, "DIO / DSO / DPO Trend", "Days")
-            st.plotly_chart(fig_comp, use_container_width=True)
+            st.plotly_chart(fig_comp, width='stretch')
 
 
 def _render_earnings_quality(pn_result, years):
@@ -1291,14 +1291,14 @@ def _render_earnings_quality(pn_result, years):
                     "Quality Tier": f"{qual_icon} {qual}" if qual else "—",
                     "Signal": "⚠️ High" if (gap_pct or 0) > 15 else ("🟡 Mod" if (gap_pct or 0) > 7 else "🟢 Low"),
                 })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
             if eq.nopat_vs_ocf_gap_pct:
                 fig = _build_bar(eq.nopat_vs_ocf_gap_pct, "Accrual Ratio % (NOPAT−OCF / Denom)", "%", pct=True)
                 # Add zero line
                 fig.add_hline(y=15, line_dash="dash", line_color="#ef4444", annotation_text="Red flag (15%)")
                 fig.add_hline(y=7, line_dash="dash", line_color="#f59e0b", annotation_text="Watch (7%)")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
     with eq_inner[1]:
         st.markdown("**Revenue Recognition Risk (Receivables / Revenue)**")
@@ -1313,9 +1313,9 @@ def _render_earnings_quality(pn_result, years):
                 {"Receivables % of Revenue": eq.receivables_to_revenue},
                 "Receivables-to-Revenue Ratio (%)", "%", pct=True
             )
-            st.plotly_chart(fig_rec, use_container_width=True)
+            st.plotly_chart(fig_rec, width='stretch')
             rows = [{"Year": _yl(y), "Rec / Rev %": f"{v:.1f}%"} for y, v in sorted(eq.receivables_to_revenue.items())]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
     with eq_inner[2]:
         st.markdown("**Exceptional Items History**")
@@ -1339,7 +1339,7 @@ def _render_earnings_quality(pn_result, years):
                     "% of Net Profit": f"{exc_pct_profit:.1f}%" if exc_pct_profit is not None else "—",
                     "Nature": "⚠️ Material" if exc_pct is not None and abs(exc_pct) > 10 else "—",
                 })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
             # Core vs Reported NOPAT chart
             if (pn_result.academic and pn_result.academic.core_nopat and pn_result.reformulated_is.get("NOPAT")):
@@ -1350,7 +1350,7 @@ def _render_earnings_quality(pn_result, years):
                     {"Reported NOPAT": nopat_rep, "Core NOPAT": nopat_core},
                     "Core vs Reported NOPAT", "₹ Cr"
                 )
-                st.plotly_chart(fig_core, use_container_width=True)
+                st.plotly_chart(fig_core, width='stretch')
 
     with eq_inner[3]:
         st.markdown("**ReOI Persistence Score**")
@@ -1377,14 +1377,14 @@ def _render_earnings_quality(pn_result, years):
         # ReOI bar chart
         if pn_result.academic and pn_result.academic.reoi:
             fig_reoi = _build_bar(pn_result.academic.reoi, "Residual Operating Income (ReOI)", "₹ Cr")
-            st.plotly_chart(fig_reoi, use_container_width=True)
+            st.plotly_chart(fig_reoi, width='stretch')
 
     with eq_inner[4]:
         st.markdown("**Core vs Reported NOPAT Divergence**")
         if eq.core_vs_reported_nopat_gap:
             rows = [{"Year": _yl(y), "Divergence (Reported > Core %)": f"{v:.1f}%"}
                     for y, v in sorted(eq.core_vs_reported_nopat_gap.items())]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
             st.markdown("""
             Positive divergence means exceptional items inflate reported NOPAT above Core NOPAT.
             Use Core NOPAT for valuation and forecasting when this divergence is persistent.
@@ -1445,7 +1445,7 @@ def _render_capital_allocation(pn_result, years):
             "Growth CapEx": format_indian_number(growth),
         })
     if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
     # Charts
     c1, c2 = st.columns(2)
@@ -1454,7 +1454,7 @@ def _render_capital_allocation(pn_result, years):
             fig_fc = _build_bar(ca.fcf_conversion, "FCF Conversion (FCF / NOPAT)", "x", color="#1e40af")
             fig_fc.add_hline(y=1.0, line_dash="dash", line_color="#22c55e", annotation_text="1.0x (excellent)")
             fig_fc.add_hline(y=0.6, line_dash="dash", line_color="#f59e0b", annotation_text="0.6x (watch)")
-            st.plotly_chart(fig_fc, use_container_width=True)
+            st.plotly_chart(fig_fc, width='stretch')
     if ca.incremental_roic:
         rnoa_s = pn_result.ratios.get("RNOA %", {})
         with c2:
@@ -1462,7 +1462,7 @@ def _render_capital_allocation(pn_result, years):
                 {"Incremental ROIC %": ca.incremental_roic, "Existing RNOA %": rnoa_s},
                 "Incremental ROIC vs Existing RNOA", "%", pct=True
             )
-            st.plotly_chart(fig_inc, use_container_width=True)
+            st.plotly_chart(fig_inc, width='stretch')
 
     if ca.maintenance_capex_est or ca.growth_capex_est:
         st.markdown("**CapEx Split: Maintenance (Dep.) vs Growth**")
@@ -1475,7 +1475,7 @@ def _render_capital_allocation(pn_result, years):
         fig_cap.update_layout(barmode="stack", title="CapEx Split", height=280,
                                paper_bgcolor="white", plot_bgcolor="#f8fafc",
                                margin=dict(l=40, r=20, t=40, b=30))
-        st.plotly_chart(fig_cap, use_container_width=True)
+        st.plotly_chart(fig_cap, width='stretch')
 
 
 def _render_mean_reversion(pn_result, years):
@@ -1522,7 +1522,7 @@ def _render_mean_reversion(pn_result, years):
 
     if dist_rows:
         df_dist = pd.DataFrame(dist_rows)
-        st.dataframe(df_dist, use_container_width=True, hide_index=True)
+        st.dataframe(df_dist, width='stretch', hide_index=True)
 
     # Scenario seed suggestion
     if mrp.bear_opm is not None and mrp.base_opm is not None and mrp.bull_opm is not None:
@@ -1581,7 +1581,7 @@ def _render_scoring_enhanced(scoring, years):
                 zone_icons = {"Safe": "✅", "Grey": "⚠️", "Distress": "🚨"}
                 rows.append({"Year": _yl(y), "Z-Score": f"{az.score:.2f}",
                               "Zone": f"{zone_icons.get(az.zone, '?')} {az.zone}"})
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
             z_vals = [az.score for az in scoring.altman_z.values()]
             z_years = [_yl(y) for y in sorted(scoring.altman_z.keys())]
@@ -1591,7 +1591,7 @@ def _render_scoring_enhanced(scoring, years):
             fig.add_hline(y=1.81, line_dash="dash", line_color="#f59e0b", annotation_text="Grey (1.81)")
             fig.update_layout(title="Altman Z-Score Trend", height=260, paper_bgcolor="white",
                                plot_bgcolor="#f8fafc", margin=dict(l=40, r=20, t=40, b=30))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
     with tab_z2:
         st.markdown("#### Altman Z″ (2002) — Emerging Market Model")
@@ -1619,7 +1619,7 @@ def _render_scoring_enhanced(scoring, years):
                     "X3 (EBIT/TA)": f"{az.x3:.3f}",
                     "X4 (EQ/TL)": f"{az.x4:.3f}",
                 })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
             z2_vals = [az.score for az in scoring.altman_z_double.values()]
             z2_years = [_yl(y) for y in sorted(scoring.altman_z_double.keys())]
@@ -1630,7 +1630,7 @@ def _render_scoring_enhanced(scoring, years):
             fig2.update_layout(title="Altman Z″ Score (Emerging Market)", height=260,
                                 paper_bgcolor="white", plot_bgcolor="#f8fafc",
                                 margin=dict(l=40, r=20, t=40, b=30))
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width='stretch')
 
             # Compare Z vs Z″
             if scoring.altman_z:
@@ -1643,7 +1643,7 @@ def _render_scoring_enhanced(scoring, years):
                         {"Altman Z (1968)": z_orig, "Altman Z″ (2002 EM)": z_em},
                         "Z vs Z″ Score Comparison"
                     )
-                    st.plotly_chart(fig_comp, use_container_width=True)
+                    st.plotly_chart(fig_comp, width='stretch')
         else:
             st.info("Z″ data unavailable — check that EBIT, Total Assets, Total Equity, Working Capital are mapped.")
 
@@ -1671,7 +1671,7 @@ def _render_scoring_enhanced(scoring, years):
             fig.update_layout(title="Piotroski F-Score Trend", height=200, yaxis_range=[0, 9],
                                paper_bgcolor="white", plot_bgcolor="#f8fafc",
                                margin=dict(l=40, r=30, t=30, b=30))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
 
 def _render_ratios_with_ccc(analysis, pn_result, years):
@@ -1696,43 +1696,16 @@ def _render_ratios_with_ccc(analysis, pn_result, years):
                         v = series.get(y)
                         row[_yl(y)] = f"{v:.2f}" if v is not None else "—"
                     rows.append(row)
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
                 key_metric = list(cat_data.keys())[0] if cat_data else None
                 if key_metric and cat_data[key_metric]:
                     fig = _build_bar(cat_data[key_metric], key_metric, pct="%" in key_metric)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
 
     # CCC section in Efficiency
     with st.expander("🔄 Cash Conversion Cycle — Working Capital Quality", expanded=False):
         _render_ccc(pn_result, years)
 
-
-
-    categories = {
-        "Liquidity": ("💧", "Current Ratio, Quick Ratio, Cash Ratio"),
-        "Profitability": ("📈", "Margins, ROA, ROE"),
-        "Leverage": ("⚖️", "D/E, Interest Coverage, Equity Multiplier"),
-        "Efficiency": ("⚡", "Asset Turnover, Working Capital Days"),
-    }
-
-    for cat, (icon, desc) in categories.items():
-        cat_data = analysis.ratios.get(cat, {})
-        if cat_data:
-            with st.expander(f"{icon} {cat} — {desc}", expanded=(cat == "Profitability")):
-                rows = []
-                for metric, series in cat_data.items():
-                    row = {"Metric": metric}
-                    for y in years:
-                        v = series.get(y)
-                        row[_yl(y)] = f"{v:.2f}" if v is not None else "—"
-                    rows.append(row)
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-                # Mini chart for key metrics
-                key_metric = list(cat_data.keys())[0] if cat_data else None
-                if key_metric and cat_data[key_metric]:
-                    fig = _build_bar(cat_data[key_metric], key_metric, pct="%" in key_metric)
-                    st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_trends(analysis, years):
@@ -1754,7 +1727,7 @@ def _render_trends(analysis, years):
             if trend.yoy_growth:
                 st.plotly_chart(
                     _build_bar(trend.yoy_growth, f"{metric} — YoY Growth %", pct=True),
-                    use_container_width=True
+                    width='stretch'
                 )
 
 
@@ -1782,7 +1755,7 @@ def _render_scoring(scoring, years):
                     "Zone": f"{zone_icons.get(az.zone, '?')} {az.zone}",
                 })
             df = pd.DataFrame(rows)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width='stretch', hide_index=True)
 
             # Gauge-style chart
             z_vals = [az.score for az in scoring.altman_z.values()]
@@ -1792,7 +1765,7 @@ def _render_scoring(scoring, years):
             fig.add_hline(y=2.99, line_dash="dash", line_color="#22c55e", annotation_text="Safe (2.99)")
             fig.add_hline(y=1.81, line_dash="dash", line_color="#f59e0b", annotation_text="Grey (1.81)")
             fig.update_layout(title="Altman Z-Score Trend", height=260, paper_bgcolor="white", plot_bgcolor="#f8fafc", margin=dict(l=40,r=20,t=40,b=30))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
     with col2:
         st.markdown("#### Piotroski F-Score (Quality)")
@@ -1820,7 +1793,7 @@ def _render_scoring(scoring, years):
                 marker_color=colors_pf, name="F-Score"
             ))
             fig.update_layout(title="Piotroski F-Score Trend", height=200, yaxis_range=[0, 9], paper_bgcolor="white", plot_bgcolor="#f8fafc", margin=dict(l=40,r=20,t=30,b=30))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
 
 def _render_valuation(pn_result, years):
@@ -1891,7 +1864,7 @@ def _render_valuation(pn_result, years):
                     "NOA": format_indian_number(pf.noa[i] if i < len(pf.noa) else None),
                     "ReOI": format_indian_number(pf.reoi[i] if i < len(pf.reoi) else None),
                 })
-            st.dataframe(pd.DataFrame(pf_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(pf_rows), width='stretch', hide_index=True)
 
 
 def _render_fcf(pn_result, years):
@@ -1909,7 +1882,7 @@ def _render_fcf(pn_result, years):
                     row[_yl(y)] = format_indian_number(v) if v is not None else "—"
                 rows.append(row)
         if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
         # FCF chart
         fcf_s = pn_result.fcf.get("Free Cash Flow", {})
@@ -1920,7 +1893,7 @@ def _render_fcf(pn_result, years):
             if ocf_s: series["Operating Cash Flow"] = ocf_s
             if capex_s: series["Capital Expenditure"] = {y: -v for y, v in capex_s.items()}
             if fcf_s: series["Free Cash Flow"] = fcf_s
-            st.plotly_chart(_build_line(series, "FCF Bridge"), use_container_width=True)
+            st.plotly_chart(_build_line(series, "FCF Bridge"), width='stretch')
 
     # Value drivers
     if pn_result.value_drivers:
@@ -1951,7 +1924,7 @@ def _render_fcf(pn_result, years):
                 height=280, paper_bgcolor="white", plot_bgcolor="#f8fafc",
                 margin=dict(l=50,r=50,t=40,b=30), legend=dict(orientation="h", y=-0.2),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
 
 def _render_mappings(data, mappings, years):
@@ -1979,7 +1952,7 @@ def _render_mappings(data, mappings, years):
     rows = [{"Source Metric": metric_label(src), "→ Target": tgt, "Statement": tgt.split("::")[0] if "::" in tgt else "—"}
             for src, tgt in sorted(mappings.items())]
     if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
     # Export mappings
     st.download_button(
@@ -2020,7 +1993,7 @@ def _render_data_explorer(data, years):
         rows.append(row)
 
     if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
     # Export
     all_rows = []
@@ -2061,7 +2034,7 @@ def _render_debug(pn_result, analysis):
                     "Status": "✅" if r.status == "ok" else "⚠️",
                     "Note": r.note or "",
                 })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
         recon_tab, components_tab = st.tabs([
             "⚖️ Balance Sheet Reconciliation",
@@ -2083,7 +2056,7 @@ def _render_debug(pn_result, analysis):
                         "Gap": format_indian_number(gap),
                         "OK?": "✅" if abs(gap) < 1 else "⚠️",
                     })
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
             if diag.balance_sheet_reconciliation:
                 st.markdown("**📘 Balance Sheet Integrity (CA+NCA vs TA, TL+EQ vs TA)**")
@@ -2102,7 +2075,7 @@ def _render_debug(pn_result, analysis):
                         "L+E Gap (TL+EQ−TA)": format_indian_number(le_gap),
                         "OK?": "✅" if abs(assets_gap) < 1 and abs(le_gap) < 1 else "⚠️",
                     })
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
         with components_tab:
             if diag.current_components_checks:
@@ -2121,7 +2094,7 @@ def _render_debug(pn_result, analysis):
                         "CL Gap": format_indian_number(cl_gap),
                         "OK?": "✅" if abs(ca_gap) < 1 and abs(cl_gap) < 1 else "⚠️",
                     })
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
         # Ratio warnings
         if diag.ratio_warnings:
@@ -2153,7 +2126,7 @@ def _render_debug(pn_result, analysis):
                         "Equity": format_indian_number(r.equity),
                         "NOPAT": format_indian_number(r.nopat),
                     })
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
     if analysis.insights:
         with st.expander("💡 All Insights"):
@@ -2295,7 +2268,7 @@ if st.session_state["step"] == "upload":
 
             if datasets:
                 merged_data, merged_years, debug_info = merge_financial_data(datasets)
-                if st.button("▶ Continue to Mapping", type="primary", use_container_width=True):
+                if st.button("▶ Continue to Mapping", type="primary", width='stretch'):
                     st.session_state.update({
                         "step": "mapping",
                         "data": merged_data,
@@ -2325,7 +2298,7 @@ if st.session_state["step"] == "upload":
         """, unsafe_allow_html=True)
 
         st.markdown("### 🔧 Sample Data")
-        if st.button("Load Reliance Sample Data", use_container_width=True):
+        if st.button("Load Reliance Sample Data", width='stretch'):
             # Generate realistic sample data
             sample_data = _generate_sample_data()
             st.session_state.update({
@@ -2448,7 +2421,7 @@ elif st.session_state["step"] == "mapping":
             st.session_state["step"] = "upload"
             st.rerun()
     with col_btn2:
-        if st.button("▶ Run Analysis", type="primary", use_container_width=True):
+        if st.button("▶ Run Analysis", type="primary", width='stretch'):
             st.session_state["mappings"] = current_mappings
             st.session_state["step"] = "dashboard"
             st.rerun()

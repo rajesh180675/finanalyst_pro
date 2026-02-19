@@ -51,7 +51,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        "About": "FinAnalyst Pro — Enterprise Penman-Nissim Financial Analysis Platform v8.0",
+        "About": "FinAnalyst Pro — Enterprise Penman-Nissim Financial Analysis Platform v9.0",
     },
 )
 
@@ -229,6 +229,7 @@ def _init_state() -> None:
         "pn_forecast_method": "reoi_mean3",
         "pn_strict_mode": True,
         "pn_classification_mode": "auto",
+        "pn_sector": "Auto",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -245,7 +246,7 @@ with st.sidebar:
     <div style='text-align:center; padding:0.5rem 0 1rem;'>
         <span style='font-size:2rem;'>📊</span><br>
         <strong style='font-size:1rem; color:#1e40af;'>FinAnalyst Pro</strong><br>
-        <span style='font-size:0.72rem; color:#64748b;'>Enterprise PN Framework v8.0</span>
+        <span style='font-size:0.72rem; color:#64748b;'>Enterprise PN Framework v9.0</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -290,6 +291,17 @@ with st.sidebar:
             value=st.session_state["pn_strict_mode"],
         )
 
+        st.session_state["pn_sector"] = st.selectbox(
+            "Sector (for benchmarks)",
+            ["Auto", "Manufacturing", "IT/Technology", "FMCG/Consumer", "Pharma",
+             "Specialty Chemicals", "Infrastructure", "Financial Services",
+             "Auto/Auto Ancillaries"],
+            index=["Auto", "Manufacturing", "IT/Technology", "FMCG/Consumer", "Pharma",
+                   "Specialty Chemicals", "Infrastructure", "Financial Services",
+                   "Auto/Auto Ancillaries"].index(st.session_state["pn_sector"]),
+            help="Sector benchmarks for OPM/RNOA/NOAT comparisons in the Mean-Reversion panel"
+        )
+
         st.markdown("---")
         if st.button("🔄 New Analysis", use_container_width=True):
             for k in ["step", "data", "mappings", "company_name", "years"]:
@@ -302,9 +314,9 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("""
     <div style='font-size:0.7rem; color:#94a3b8; text-align:center;'>
-        Penman-Nissim (2001) · Altman Z (1968)<br>
-        Piotroski F (2000) · Shapley Attribution<br>
-        ReOI Valuation · Scenario Analysis
+        Penman-Nissim (2001) · Altman Z (1968) · Altman Z″ (2002 EM)<br>
+        Piotroski F (2000) · Shapley Attribution · Nissim (2023)<br>
+        ReOI Valuation · Quality of Earnings · Capital Allocation
     </div>
     """, unsafe_allow_html=True)
 
@@ -1139,9 +1151,562 @@ def _render_nissim_profitability(pn_result, years):
         """)
 
 
-def _render_ratios(analysis, pn_result, years):
-    """Ratios tab: all ratio categories in tables + charts."""
+def _render_ccc(pn_result, years):
+    """Cash Conversion Cycle & Working Capital Quality tab section."""
+    st.markdown("### 🔄 Cash Conversion Cycle & Working Capital Quality")
+
+    ccc = pn_result.ccc_metrics
+    if not ccc or (not ccc.ccc and not ccc.dio):
+        st.info("CCC data unavailable — ensure Inventory, Trade Receivables, Accounts Payable, and COGS are mapped.")
+        return
+
+    # Quality flags first
+    if ccc.quality_flags:
+        st.markdown("**📋 Working Capital Quality Flags**")
+        for flag in ccc.quality_flags:
+            if "⚠️" in flag:
+                st.markdown(f"<span class='insight-warning'>{flag}</span>", unsafe_allow_html=True)
+            elif "✅" in flag:
+                st.markdown(f"<span class='insight-positive'>{flag}</span>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<span class='insight-neutral'>{flag}</span>", unsafe_allow_html=True)
+        st.markdown("")
+
+    # CCC table
+    st.markdown("**📊 CCC Decomposition (Days)**")
+    ccc_rows = []
+    for y in years:
+        dio_v = ccc.dio.get(y)
+        dso_v = ccc.dso.get(y)
+        dpo_v = ccc.dpo.get(y)
+        ccc_v = ccc.ccc.get(y)
+        inv_gap = ccc.inventory_vs_revenue_gap.get(y)
+        rec_gap = ccc.receivables_vs_revenue_gap.get(y)
+
+        ccc_rows.append({
+            "Year": _yl(y),
+            "DIO (days)": f"{dio_v:.1f}" if dio_v is not None else "—",
+            "DSO (days)": f"{dso_v:.1f}" if dso_v is not None else "—",
+            "DPO (days)": f"{dpo_v:.1f}" if dpo_v is not None else "—",
+            "CCC (days)": f"{ccc_v:.1f}" if ccc_v is not None else "—",
+            "Inv vs Rev Δ (pp)": (f"{'▲' if (inv_gap or 0) > 2 else '▼' if (inv_gap or 0) < -2 else '—'} {inv_gap:.1f}" if inv_gap is not None else "—"),
+            "Rec vs Rev Δ (pp)": (f"{'▲' if (rec_gap or 0) > 2 else '▼' if (rec_gap or 0) < -2 else '—'} {rec_gap:.1f}" if rec_gap is not None else "—"),
+        })
+    if ccc_rows:
+        st.dataframe(pd.DataFrame(ccc_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("""
+    <div style='font-size:0.75rem; color:#64748b; padding:0.4rem; background:#f8fafc; border-radius:6px; margin-top:0.3rem;'>
+    <strong>DIO</strong> = Inventory / (COGS / 365) | <strong>DSO</strong> = Receivables / (Revenue / 365) |
+    <strong>DPO</strong> = Payables / (COGS / 365) | <strong>CCC</strong> = DIO + DSO − DPO<br>
+    <strong>Inv/Rec vs Rev Δ</strong>: positive = growing faster than revenue → potential quality concern
+    </div>
+    """, unsafe_allow_html=True)
+
+    # CCC trend chart
+    c1, c2 = st.columns(2)
+    if ccc.ccc:
+        with c1:
+            fig_ccc = _build_bar(ccc.ccc, "Cash Conversion Cycle (Days)", "Days", color="#1e40af")
+            st.plotly_chart(fig_ccc, use_container_width=True)
+    if ccc.dio or ccc.dso or ccc.dpo:
+        with c2:
+            comp_series = {}
+            if ccc.dio: comp_series["DIO"] = ccc.dio
+            if ccc.dso: comp_series["DSO"] = ccc.dso
+            if ccc.dpo: comp_series["DPO"] = ccc.dpo
+            fig_comp = _build_line(comp_series, "DIO / DSO / DPO Trend", "Days")
+            st.plotly_chart(fig_comp, use_container_width=True)
+
+
+def _render_earnings_quality(pn_result, years):
+    """Standalone Quality of Earnings dashboard."""
+    st.markdown("### 📊 Quality of Earnings Dashboard")
+
+    eq = pn_result.earnings_quality_dashboard
+    if not eq:
+        st.info("Earnings quality data unavailable — run PN analysis first.")
+        return
+
+    # Verdict card — the most important output
+    verdict = eq.verdict
+    if verdict:
+        score_bar_color = "#16a34a" if verdict.score >= 75 else ("#ca8a04" if verdict.score >= 45 else "#dc2626")
+        st.markdown(f"""
+        <div style='background:{verdict.color}15; border:2px solid {verdict.color};
+                    border-radius:12px; padding:1.2rem; margin-bottom:1.5rem;'>
+            <div style='font-size:1.2rem; font-weight:800; color:{verdict.color};'>
+                📋 Earnings Quality Verdict: {verdict.verdict}
+            </div>
+            <div style='margin-top:0.5rem; background:#e2e8f0; border-radius:4px; height:8px;'>
+                <div style='width:{verdict.score}%; background:{score_bar_color};
+                            height:8px; border-radius:4px;'></div>
+            </div>
+            <div style='font-size:0.75rem; color:{verdict.color}; margin-top:0.3rem;'>
+                Quality Score: {verdict.score}/100
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_r, col_w = st.columns(2)
+        with col_r:
+            if verdict.reasons:
+                st.markdown("**✅ Supporting Evidence**")
+                for r in verdict.reasons:
+                    st.markdown(f"<span class='insight-positive'>{r}</span>", unsafe_allow_html=True)
+        with col_w:
+            if verdict.warnings:
+                st.markdown("**⚠️ Concerns**")
+                for w in verdict.warnings:
+                    st.markdown(f"<span class='insight-warning'>{w}</span>", unsafe_allow_html=True)
+
+        st.markdown("")
+
+    # Five signals in detail
+    eq_inner = st.tabs([
+        "💰 NOPAT vs Cash", "📈 Revenue Quality", "⚡ Exceptional Items",
+        "🔄 ReOI Persistence", "🎯 Core vs Reported"
+    ])
+
+    with eq_inner[0]:
+        st.markdown("**NOPAT − OCF Gap (Operating Accruals)**")
+        st.markdown("""
+        <div style='font-size:0.78rem; color:#64748b; background:#f8fafc; border-radius:6px; padding:0.6rem; margin-bottom:0.7rem;'>
+        If NOPAT > OCF consistently, the company is booking profits it hasn't collected in cash.
+        This is the single most reliable predictor of future earnings disappointments in accounting research.
+        Accrual Ratio = (NOPAT − OCF) / AvgNOA (or Revenue/OA when NOA is small).
+        </div>
+        """, unsafe_allow_html=True)
+        if eq.nopat_vs_ocf_gap:
+            rows = []
+            for y in years:
+                gap = eq.nopat_vs_ocf_gap.get(y)
+                gap_pct = eq.nopat_vs_ocf_gap_pct.get(y)
+                qual = pn_result.academic.earnings_quality.get(y) if pn_result.academic else None
+                qual_icon = {"High": "🟢", "Medium": "🟡", "Low": "🔴"}.get(str(qual), "—")
+                rows.append({
+                    "Year": _yl(y),
+                    "NOPAT−OCF (Cr)": format_indian_number(gap),
+                    "As % of Denom": f"{gap_pct:.1f}%" if gap_pct is not None else "—",
+                    "Quality Tier": f"{qual_icon} {qual}" if qual else "—",
+                    "Signal": "⚠️ High" if (gap_pct or 0) > 15 else ("🟡 Mod" if (gap_pct or 0) > 7 else "🟢 Low"),
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            if eq.nopat_vs_ocf_gap_pct:
+                fig = _build_bar(eq.nopat_vs_ocf_gap_pct, "Accrual Ratio % (NOPAT−OCF / Denom)", "%", pct=True)
+                # Add zero line
+                fig.add_hline(y=15, line_dash="dash", line_color="#ef4444", annotation_text="Red flag (15%)")
+                fig.add_hline(y=7, line_dash="dash", line_color="#f59e0b", annotation_text="Watch (7%)")
+                st.plotly_chart(fig, use_container_width=True)
+
+    with eq_inner[1]:
+        st.markdown("**Revenue Recognition Risk (Receivables / Revenue)**")
+        st.markdown("""
+        <div style='font-size:0.78rem; color:#64748b; background:#f8fafc; border-radius:6px; padding:0.6rem; margin-bottom:0.7rem;'>
+        Rising receivables-to-revenue suggests revenue is being recognised before cash is received.
+        Common in companies with channel-stuffing, aggressive booking, or deteriorating collection.
+        </div>
+        """, unsafe_allow_html=True)
+        if eq.receivables_to_revenue:
+            fig_rec = _build_line(
+                {"Receivables % of Revenue": eq.receivables_to_revenue},
+                "Receivables-to-Revenue Ratio (%)", "%", pct=True
+            )
+            st.plotly_chart(fig_rec, use_container_width=True)
+            rows = [{"Year": _yl(y), "Rec / Rev %": f"{v:.1f}%"} for y, v in sorted(eq.receivables_to_revenue.items())]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    with eq_inner[2]:
+        st.markdown("**Exceptional Items History**")
+        st.markdown("""
+        <div style='font-size:0.78rem; color:#64748b; background:#f8fafc; border-radius:6px; padding:0.6rem; margin-bottom:0.7rem;'>
+        Companies with recurrent "exceptional" items have a labelling problem: they are not exceptional.
+        Use Core NOPAT (strips exceptional items) as the basis for any DCF or ReOI forecasting.
+        </div>
+        """, unsafe_allow_html=True)
+        if eq.exceptional_pct_of_nopat or (pn_result.academic and pn_result.academic.exceptional_items):
+            exc_items = pn_result.academic.exceptional_items if pn_result.academic else {}
+            rows = []
+            for y in years:
+                exc = (exc_items or {}).get(y)
+                exc_pct = eq.exceptional_pct_of_nopat.get(y)
+                exc_pct_profit = eq.exceptional_pct_of_profit.get(y)
+                rows.append({
+                    "Year": _yl(y),
+                    "Exceptional Items (Cr)": format_indian_number(exc),
+                    "% of NOPAT": f"{exc_pct:.1f}%" if exc_pct is not None else "—",
+                    "% of Net Profit": f"{exc_pct_profit:.1f}%" if exc_pct_profit is not None else "—",
+                    "Nature": "⚠️ Material" if exc_pct is not None and abs(exc_pct) > 10 else "—",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            # Core vs Reported NOPAT chart
+            if (pn_result.academic and pn_result.academic.core_nopat and pn_result.reformulated_is.get("NOPAT")):
+                st.markdown("**Core vs Reported NOPAT**")
+                nopat_rep = pn_result.reformulated_is["NOPAT"]
+                nopat_core = pn_result.academic.core_nopat
+                fig_core = _build_line(
+                    {"Reported NOPAT": nopat_rep, "Core NOPAT": nopat_core},
+                    "Core vs Reported NOPAT", "₹ Cr"
+                )
+                st.plotly_chart(fig_core, use_container_width=True)
+
+    with eq_inner[3]:
+        st.markdown("**ReOI Persistence Score**")
+        st.markdown("""
+        <div style='font-size:0.78rem; color:#64748b; background:#f8fafc; border-radius:6px; padding:0.6rem; margin-bottom:0.7rem;'>
+        Pearson r between ReOI_t and ReOI_{t+1}: how well does this year's excess return predict
+        next year's? High persistence (r > 0.7) = sustainable moat; low persistence = lumpy earnings.
+        Nissim (2023) reports empirical RNOA persistence ≈ 0.741 for broad US sample.
+        </div>
+        """, unsafe_allow_html=True)
+
+        pers = eq.reoi_persistence_score
+        if pers is not None:
+            pers_color = "#166534" if pers >= 0.7 else ("#854d0e" if pers >= 0.3 else "#991b1b")
+            pers_label = "High (sustainable)" if pers >= 0.7 else ("Moderate" if pers >= 0.3 else "Low (lumpy)")
+            st.markdown(f"""
+            <div class='kpi-card' style='max-width:300px;'>
+                <div class='kpi-label'>ReOI Persistence (Pearson r)</div>
+                <div class='kpi-value' style='color:{pers_color};'>{pers:.3f}</div>
+                <div class='kpi-sub'>{pers_label}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ReOI bar chart
+        if pn_result.academic and pn_result.academic.reoi:
+            fig_reoi = _build_bar(pn_result.academic.reoi, "Residual Operating Income (ReOI)", "₹ Cr")
+            st.plotly_chart(fig_reoi, use_container_width=True)
+
+    with eq_inner[4]:
+        st.markdown("**Core vs Reported NOPAT Divergence**")
+        if eq.core_vs_reported_nopat_gap:
+            rows = [{"Year": _yl(y), "Divergence (Reported > Core %)": f"{v:.1f}%"}
+                    for y, v in sorted(eq.core_vs_reported_nopat_gap.items())]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.markdown("""
+            Positive divergence means exceptional items inflate reported NOPAT above Core NOPAT.
+            Use Core NOPAT for valuation and forecasting when this divergence is persistent.
+            """)
+        else:
+            st.info("No exceptional items detected — Core and Reported NOPAT are identical.")
+
+
+def _render_capital_allocation(pn_result, years):
+    """Capital Allocation Scorecard section for FCF tab."""
+    ca = pn_result.capital_allocation
+    if not ca:
+        return
+
+    st.markdown("### 💼 Capital Allocation Scorecard")
+    st.markdown("""
+    <div style='background:#eff6ff; border-left:4px solid #1e40af; border-radius:6px;
+                padding:0.7rem 1rem; font-size:0.82rem; color:#1e40af; margin-bottom:1rem;'>
+    Answers the critical question for cash-rich Indian companies: What does management do with
+    the excess cash generated? FCF Conversion >1.0 = asset-light; <0.6 = investigate.
+    Incremental ROIC > existing RNOA = value-accretive capital deployment.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Insights
+    if ca.insights:
+        for ins in ca.insights:
+            if "✅" in ins:
+                st.markdown(f"<span class='insight-positive'>{ins}</span>", unsafe_allow_html=True)
+            elif "⚠️" in ins:
+                st.markdown(f"<span class='insight-warning'>{ins}</span>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<span class='insight-neutral'>{ins}</span>", unsafe_allow_html=True)
+        st.markdown("")
+
+    # Scorecard table
+    rows = []
+    for y in years:
+        rr = ca.reinvestment_rate.get(y)
+        inc_roic = ca.incremental_roic.get(y)
+        fcf_conv = ca.fcf_conversion.get(y)
+        capex_int = ca.capex_intensity.get(y)
+        maint = ca.maintenance_capex_est.get(y)
+        growth = ca.growth_capex_est.get(y)
+        rnoa_on_inc = ca.rnoa_on_incremental.get(y)
+        noa_gr = ca.noa_growth_rate.get(y)
+
+        rows.append({
+            "Year": _yl(y),
+            "Reinvestment Rate": f"{rr:.1%}" if rr is not None else "—",
+            "NOA Growth %": f"{noa_gr:.1f}%" if noa_gr is not None else "—",
+            "Incremental ROIC %": f"{inc_roic:.1f}%" if inc_roic is not None else "—",
+            "vs Existing RNOA": (f"+{rnoa_on_inc:.1f}pp" if (rnoa_on_inc or 0) > 0
+                                  else f"{rnoa_on_inc:.1f}pp") if rnoa_on_inc is not None else "—",
+            "FCF Conversion": f"{fcf_conv:.2f}x" if fcf_conv is not None else "—",
+            "CapEx/Rev %": f"{capex_int:.1f}%" if capex_int is not None else "—",
+            "Maint CapEx (Dep)": format_indian_number(maint),
+            "Growth CapEx": format_indian_number(growth),
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # Charts
+    c1, c2 = st.columns(2)
+    if ca.fcf_conversion:
+        with c1:
+            fig_fc = _build_bar(ca.fcf_conversion, "FCF Conversion (FCF / NOPAT)", "x", color="#1e40af")
+            fig_fc.add_hline(y=1.0, line_dash="dash", line_color="#22c55e", annotation_text="1.0x (excellent)")
+            fig_fc.add_hline(y=0.6, line_dash="dash", line_color="#f59e0b", annotation_text="0.6x (watch)")
+            st.plotly_chart(fig_fc, use_container_width=True)
+    if ca.incremental_roic:
+        rnoa_s = pn_result.ratios.get("RNOA %", {})
+        with c2:
+            fig_inc = _build_line(
+                {"Incremental ROIC %": ca.incremental_roic, "Existing RNOA %": rnoa_s},
+                "Incremental ROIC vs Existing RNOA", "%", pct=True
+            )
+            st.plotly_chart(fig_inc, use_container_width=True)
+
+    if ca.maintenance_capex_est or ca.growth_capex_est:
+        st.markdown("**CapEx Split: Maintenance (Dep.) vs Growth**")
+        cap_years = sorted(set(ca.maintenance_capex_est.keys()) | set(ca.growth_capex_est.keys()))
+        fig_cap = go.Figure()
+        maint_vals = [ca.maintenance_capex_est.get(y, 0) for y in cap_years]
+        growth_vals = [ca.growth_capex_est.get(y, 0) for y in cap_years]
+        fig_cap.add_trace(go.Bar(name="Maintenance (≈ Dep)", x=[_yl(y) for y in cap_years], y=maint_vals, marker_color="#60a5fa"))
+        fig_cap.add_trace(go.Bar(name="Growth (CapEx − Dep)", x=[_yl(y) for y in cap_years], y=growth_vals, marker_color="#1e40af"))
+        fig_cap.update_layout(barmode="stack", title="CapEx Split", height=280,
+                               paper_bgcolor="white", plot_bgcolor="#f8fafc",
+                               margin=dict(l=40, r=20, t=40, b=30))
+        st.plotly_chart(fig_cap, use_container_width=True)
+
+
+def _render_mean_reversion(pn_result, years):
+    """Mean-Reversion Forecasting Panel section for Valuation tab."""
+    mrp = pn_result.mean_reversion_panel
+    if not mrp:
+        return
+
+    st.markdown("---")
+    st.markdown("### 📐 Mean-Reversion Forecasting Panel")
+    st.markdown("""
+    <div style='background:#fef9c3; border-left:4px solid #ca8a04; border-radius:6px;
+                padding:0.7rem 1rem; font-size:0.82rem; color:#854d0e; margin-bottom:1rem;'>
+    Based on Nissim (2023): OFR is the most persistent factor (anchor it), OAT is second-most stable,
+    OPM is most volatile (mean-revert it). Use the percentile ranges below to seed Bear/Base/Bull scenarios.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Reversion signals
+    if mrp.reversion_signals:
+        for sig in mrp.reversion_signals:
+            cls = "insight-warning" if "⚡" in sig else "insight-neutral"
+            st.markdown(f"<span class='{cls}'>{sig}</span>", unsafe_allow_html=True)
+        st.markdown("")
+
+    # Distribution table
+    def row(label, mean, p10, p90, current, fmt=".1f", unit=""):
+        return {
+            "Driver": label,
+            "P10 (Bear)": f"{p10:{fmt}}{unit}" if p10 is not None else "—",
+            "Mean (Base)": f"{mean:{fmt}}{unit}" if mean is not None else "—",
+            "P90 (Bull)": f"{p90:{fmt}}{unit}" if p90 is not None else "—",
+            "Current": f"{current:{fmt}}{unit}" if current is not None else "—",
+        }
+
+    dist_rows = [
+        row("OPM %", mrp.opm_mean, mrp.opm_p10, mrp.opm_p90, mrp.opm_current, fmt=".1f", unit="%"),
+        row("NOAT (×)", mrp.oat_mean, mrp.oat_p10, mrp.oat_p90, mrp.oat_current, fmt=".2f"),
+        row("OFR (%)", mrp.ofr_mean, mrp.ofr_p10, mrp.ofr_p90, mrp.ofr_current,
+            fmt=".1f", unit="%") if mrp.ofr_mean else None,
+        row("RNOA %", mrp.rnoa_mean, mrp.rnoa_p10, mrp.rnoa_p90, mrp.rnoa_current, fmt=".1f", unit="%"),
+    ]
+    dist_rows = [r for r in dist_rows if r is not None]
+
+    if dist_rows:
+        df_dist = pd.DataFrame(dist_rows)
+        st.dataframe(df_dist, use_container_width=True, hide_index=True)
+
+    # Scenario seed suggestion
+    if mrp.bear_opm is not None and mrp.base_opm is not None and mrp.bull_opm is not None:
+        st.markdown("**📋 Auto-Seeded Scenario Suggestions**")
+        cols = st.columns(3)
+        for col, (scenario, opm, noat, color) in zip(cols, [
+            ("🐻 Bear", mrp.bear_opm, mrp.bear_noat, "#ef4444"),
+            ("📊 Base", mrp.base_opm, mrp.base_noat, "#1e40af"),
+            ("🐂 Bull", mrp.bull_opm, mrp.bull_noat, "#22c55e"),
+        ]):
+            with col:
+                st.markdown(f"""
+                <div class='section-card' style='border-left:4px solid {color};'>
+                <div style='font-weight:700; color:{color};'>{scenario}</div>
+                <div style='font-size:0.8rem; margin-top:0.3rem;'>
+                    OPM target: <strong>{opm:.1f}%</strong><br>
+                    NOAT target: <strong>{(noat or 0):.2f}×</strong>
+                </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # Sector benchmark
+    if mrp.sector_benchmark:
+        bm = mrp.sector_benchmark
+        st.markdown(f"**🏭 Sector Benchmark: {bm.sector}**")
+        bm_cols = st.columns(4)
+        bm_cols[0].metric("Sector RNOA", f"{bm.rnoa_pct:.1f}%")
+        bm_cols[1].metric("Sector OPM", f"{bm.opm_pct:.1f}%")
+        bm_cols[2].metric("Sector NOAT", f"{bm.noat:.2f}×")
+        bm_cols[3].metric("Sector OFR", f"{bm.ofr:.0%}")
+        if bm.note:
+            st.caption(f"ℹ️ {bm.note}")
+
+
+def _render_scoring_enhanced(scoring, years):
+    """Enhanced Scoring tab: Altman Z (1968) + Altman Z″ (2002 EM) + Piotroski F."""
+    st.markdown("### 🛡️ Financial Scoring Models")
+
+    tab_z1, tab_z2, tab_pf = st.tabs([
+        "📊 Altman Z (1968)", "🌏 Altman Z″ (2002 EM)", "🎯 Piotroski F-Score"
+    ])
+
+    with tab_z1:
+        st.markdown("#### Altman Z-Score (1968) — Original Model")
+        st.markdown("""
+        <div style='font-size:0.75rem; color:#64748b; margin-bottom:0.7rem;'>
+        Z > 2.99 = Safe Zone | 1.81–2.99 = Grey Zone | Z < 1.81 = Distress Zone<br>
+        <strong>⚠️ Caution:</strong> Calibrated on 1960s US manufacturing firms. Systematically
+        over-scores asset-light Indian IT/pharma/FMCG firms. Use Z″ as primary signal.
+        </div>
+        """, unsafe_allow_html=True)
+
+        if scoring.altman_z:
+            rows = []
+            for y, az in sorted(scoring.altman_z.items()):
+                zone_icons = {"Safe": "✅", "Grey": "⚠️", "Distress": "🚨"}
+                rows.append({"Year": _yl(y), "Z-Score": f"{az.score:.2f}",
+                              "Zone": f"{zone_icons.get(az.zone, '?')} {az.zone}"})
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            z_vals = [az.score for az in scoring.altman_z.values()]
+            z_years = [_yl(y) for y in sorted(scoring.altman_z.keys())]
+            colors = [get_zone_color(az.zone) for az in [scoring.altman_z[y] for y in sorted(scoring.altman_z.keys())]]
+            fig = go.Figure(go.Bar(x=z_years, y=z_vals, marker_color=colors, name="Z-Score"))
+            fig.add_hline(y=2.99, line_dash="dash", line_color="#22c55e", annotation_text="Safe (2.99)")
+            fig.add_hline(y=1.81, line_dash="dash", line_color="#f59e0b", annotation_text="Grey (1.81)")
+            fig.update_layout(title="Altman Z-Score Trend", height=260, paper_bgcolor="white",
+                               plot_bgcolor="#f8fafc", margin=dict(l=40, r=20, t=40, b=30))
+            st.plotly_chart(fig, use_container_width=True)
+
+    with tab_z2:
+        st.markdown("#### Altman Z″ (2002) — Emerging Market Model")
+        st.markdown("""
+        <div style='background:#eff6ff; border-left:4px solid #3b82f6; border-radius:6px;
+                    padding:0.7rem 1rem; font-size:0.82rem; color:#1e40af; margin-bottom:1rem;'>
+        <strong>Z″ = 6.56×X1 + 3.26×X2 + 6.72×X3 + 1.05×X4</strong><br>
+        X1 = WC/TA | X2 = Retained Earnings/TA | X3 = EBIT/TA | X4 = Book Equity/Total Liabilities<br>
+        <strong>Zones:</strong> Safe Z″ > 2.6 | Grey 1.1–2.6 | Distress Z″ < 1.1<br>
+        This model removes the market cap variable → usable with book data only.
+        Calibrated for non-US firms. <em>Preferred model for Indian listed companies.</em>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if scoring.altman_z_double:
+            rows = []
+            for y, az in sorted(scoring.altman_z_double.items()):
+                zone_icons = {"Safe": "✅", "Grey": "⚠️", "Distress": "🚨"}
+                rows.append({
+                    "Year": _yl(y),
+                    "Z″ Score": f"{az.score:.2f}",
+                    "Zone": f"{zone_icons.get(az.zone, '?')} {az.zone}",
+                    "X1 (WC/TA)": f"{az.x1:.3f}",
+                    "X2 (RE/TA)": f"{az.x2:.3f}",
+                    "X3 (EBIT/TA)": f"{az.x3:.3f}",
+                    "X4 (EQ/TL)": f"{az.x4:.3f}",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+            z2_vals = [az.score for az in scoring.altman_z_double.values()]
+            z2_years = [_yl(y) for y in sorted(scoring.altman_z_double.keys())]
+            z2_colors = [get_zone_color(az.zone) for az in [scoring.altman_z_double[y] for y in sorted(scoring.altman_z_double.keys())]]
+            fig2 = go.Figure(go.Bar(x=z2_years, y=z2_vals, marker_color=z2_colors, name="Z″ Score"))
+            fig2.add_hline(y=2.6, line_dash="dash", line_color="#22c55e", annotation_text="Safe (2.6)")
+            fig2.add_hline(y=1.1, line_dash="dash", line_color="#f59e0b", annotation_text="Grey (1.1)")
+            fig2.update_layout(title="Altman Z″ Score (Emerging Market)", height=260,
+                                paper_bgcolor="white", plot_bgcolor="#f8fafc",
+                                margin=dict(l=40, r=20, t=40, b=30))
+            st.plotly_chart(fig2, use_container_width=True)
+
+            # Compare Z vs Z″
+            if scoring.altman_z:
+                z_orig = {y: az.score for y, az in scoring.altman_z.items()}
+                z_em = {y: az.score for y, az in scoring.altman_z_double.items()}
+                common_years = sorted(set(z_orig.keys()) & set(z_em.keys()))
+                if common_years:
+                    st.markdown("**Z vs Z″ Comparison**")
+                    fig_comp = _build_line(
+                        {"Altman Z (1968)": z_orig, "Altman Z″ (2002 EM)": z_em},
+                        "Z vs Z″ Score Comparison"
+                    )
+                    st.plotly_chart(fig_comp, use_container_width=True)
+        else:
+            st.info("Z″ data unavailable — check that EBIT, Total Assets, Total Equity, Working Capital are mapped.")
+
+    with tab_pf:
+        st.markdown("#### Piotroski F-Score (Quality)")
+        st.markdown("""
+        <div style='font-size:0.75rem; color:#64748b; margin-bottom:0.7rem;'>
+        8-9 = Strong | 5-7 = Average | 0-4 = Weak
+        </div>
+        """, unsafe_allow_html=True)
+
+        if scoring.piotroski_f:
+            latest_yr = sorted(scoring.piotroski_f.keys())[-1]
+            latest_pf = scoring.piotroski_f[latest_yr]
+            st.markdown(f"**{_yl(latest_yr)}: F-Score = {latest_pf.score}/9**")
+            for sig in latest_pf.signals:
+                color = "#166534" if sig.startswith("✅") else "#991b1b"
+                st.markdown(f"<span style='font-size:0.8rem; color:{color};'>{sig}</span>", unsafe_allow_html=True)
+
+            pf_scores = {y: pf.score for y, pf in scoring.piotroski_f.items()}
+            colors_pf = [get_piotroski_color(pf.score) for pf in [scoring.piotroski_f[y] for y in sorted(pf_scores.keys())]]
+            fig = go.Figure(go.Bar(x=[_yl(y) for y in sorted(pf_scores.keys())],
+                                    y=[pf_scores[y] for y in sorted(pf_scores.keys())],
+                                    marker_color=colors_pf, name="F-Score"))
+            fig.update_layout(title="Piotroski F-Score Trend", height=200, yaxis_range=[0, 9],
+                               paper_bgcolor="white", plot_bgcolor="#f8fafc",
+                               margin=dict(l=40, r=30, t=30, b=30))
+            st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_ratios_with_ccc(analysis, pn_result, years):
+    """Ratios tab: all ratio categories + CCC working capital quality."""
     st.markdown("### 📊 Financial Ratios")
+
+    categories = {
+        "Liquidity": ("💧", "Current Ratio, Quick Ratio, Cash Ratio"),
+        "Profitability": ("📈", "Margins, ROA, ROE"),
+        "Leverage": ("⚖️", "D/E, Interest Coverage, Equity Multiplier"),
+        "Efficiency": ("⚡", "Asset Turnover, Working Capital Days"),
+    }
+
+    for cat, (icon, desc) in categories.items():
+        cat_data = analysis.ratios.get(cat, {})
+        if cat_data:
+            with st.expander(f"{icon} {cat} — {desc}", expanded=(cat == "Profitability")):
+                rows = []
+                for metric, series in cat_data.items():
+                    row = {"Metric": metric}
+                    for y in years:
+                        v = series.get(y)
+                        row[_yl(y)] = f"{v:.2f}" if v is not None else "—"
+                    rows.append(row)
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                key_metric = list(cat_data.keys())[0] if cat_data else None
+                if key_metric and cat_data[key_metric]:
+                    fig = _build_bar(cat_data[key_metric], key_metric, pct="%" in key_metric)
+                    st.plotly_chart(fig, use_container_width=True)
+
+    # CCC section in Efficiency
+    with st.expander("🔄 Cash Conversion Cycle — Working Capital Quality", expanded=False):
+        _render_ccc(pn_result, years)
+
+
 
     categories = {
         "Liquidity": ("💧", "Current Ratio, Quick Ratio, Cash Ratio"),
@@ -1907,7 +2472,7 @@ elif st.session_state["step"] == "dashboard":
         return analyze_financials(data, mappings)
 
     @st.cache_data(ttl=60)
-    def _run_pn(_data_key: str, _map_key: str, r: float, g: float, n: int, meth: str, strict: bool, mode: str):
+    def _run_pn(_data_key: str, _map_key: str, r: float, g: float, n: int, meth: str, strict: bool, mode: str, sector: str):
         return penman_nissim_analysis(data, mappings, PNOptions(
             strict_mode=strict,
             classification_mode=mode,  # type: ignore
@@ -1915,6 +2480,7 @@ elif st.session_state["step"] == "dashboard":
             terminal_growth=g / 100,
             forecast_years=n,
             forecast_method=meth,  # type: ignore
+            sector=sector,
         ))
 
     @st.cache_data(ttl=60)
@@ -1933,6 +2499,7 @@ elif st.session_state["step"] == "dashboard":
         st.session_state["pn_forecast_method"],
         st.session_state["pn_strict_mode"],
         st.session_state["pn_classification_mode"],
+        st.session_state["pn_sector"],
     )
     scoring = _run_scoring(_data_key, _map_key)
 
@@ -1950,7 +2517,7 @@ elif st.session_state["step"] == "dashboard":
     tabs = st.tabs([
         "🏠 Overview", "📐 Penman-Nissim", "📊 Ratios", "📈 Trends",
         "🛡️ Scoring", "💰 Valuation", "💵 FCF & Value Drivers",
-        "🗺️ Mappings", "🔍 Data Explorer", "🐛 Debug",
+        "📋 Earnings Quality", "🗺️ Mappings", "🔍 Data Explorer", "🐛 Debug",
     ])
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -1966,10 +2533,10 @@ elif st.session_state["step"] == "dashboard":
         _render_penman_nissim(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 3: RATIOS
+    # TAB 3: RATIOS (enhanced with CCC)
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[2]:
-        _render_ratios(analysis, pn_result, years)
+        _render_ratios_with_ccc(analysis, pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
     # TAB 4: TRENDS
@@ -1978,39 +2545,47 @@ elif st.session_state["step"] == "dashboard":
         _render_trends(analysis, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 5: SCORING
+    # TAB 5: SCORING (enhanced with Z″)
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[4]:
-        _render_scoring(scoring, years)
+        _render_scoring_enhanced(scoring, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 6: VALUATION
+    # TAB 6: VALUATION + MEAN REVERSION PANEL
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[5]:
         _render_valuation(pn_result, years)
+        _render_mean_reversion(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 7: FCF & VALUE DRIVERS
+    # TAB 7: FCF & VALUE DRIVERS + CAPITAL ALLOCATION
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[6]:
         _render_fcf(pn_result, years)
+        _render_capital_allocation(pn_result, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 8: MAPPINGS
+    # TAB 8: EARNINGS QUALITY (new standalone dashboard)
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[7]:
+        _render_earnings_quality(pn_result, years)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # TAB 9: MAPPINGS
+    # ──────────────────────────────────────────────────────────────────────────
+    with tabs[8]:
         _render_mappings(data, mappings, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 9: DATA EXPLORER
+    # TAB 10: DATA EXPLORER
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[8]:
+    with tabs[9]:
         _render_data_explorer(data, years)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # TAB 10: DEBUG
+    # TAB 11: DEBUG
     # ──────────────────────────────────────────────────────────────────────────
-    with tabs[9]:
+    with tabs[10]:
         _render_debug(pn_result, analysis)
 
 

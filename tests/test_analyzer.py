@@ -10,10 +10,12 @@ Run:  pytest tests/ -v
 """
 
 import copy
+import io
 import json
 import math
-import sys
 import os
+import sys
+import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -2084,6 +2086,40 @@ class TestSegmentFinanceParsing:
         assert "AGRI BUSINESS" in set(out["segment"])
         assert "Revenue from Operations" in set(out["metric"])
         # Year normalization via extract_year should produce YYYYMM keys
+        assert "202503" in set(out["year"])
+
+
+
+    def test_parse_segment_finance_html_with_leading_blank_column(self):
+        html = b"""
+        <html><body><table>
+        <tr><td></td><td>Year</td><td>202503</td><td>202403</td><td>202303</td></tr>
+        <tr><td></td><td>REVENUE</td><td></td><td></td><td></td></tr>
+        <tr><td></td><td>Revenue from Operations</td><td>73464.55</td><td>66657.04</td><td>69480.89</td></tr>
+        <tr><td></td><td>FMCG - CIGARETTES</td><td>35893.57</td><td>33667.97</td><td>31267.46</td></tr>
+        </table></body></html>
+        """
+        out = parse_segment_finance_file(html, "segment_finance.xls")
+        assert not out.empty
+        assert "FMCG - CIGARETTES" in set(out["segment"])
+        assert "202503" in set(out["year"])
+
+    def test_parse_segment_finance_zip_with_html_member(self):
+        html = b"""
+        <html><body><table>
+        <tr><td>Particulars</td><td>Mar 2025</td><td>Mar 2024</td><td>Mar 2023</td></tr>
+        <tr><td>REVENUE</td><td></td><td></td><td></td></tr>
+        <tr><td>Revenue from Operations</td><td>100</td><td>90</td><td>80</td></tr>
+        <tr><td>EXPORTS</td><td>25</td><td>20</td><td>15</td></tr>
+        </table></body></html>
+        """
+        mem = io.BytesIO()
+        with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("nested/SegmentFinance_.xls", html)
+
+        out = parse_segment_finance_file(mem.getvalue(), "SegmentFinance_.zip")
+        assert not out.empty
+        assert "EXPORTS" in set(out["segment"])
         assert "202503" in set(out["year"])
 
 

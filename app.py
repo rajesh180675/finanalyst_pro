@@ -2470,7 +2470,11 @@ def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_n
         if diag.ratio_warnings:
             st.markdown("**⚠️ Ratio Warnings (Numerical Stability)**")
             for w in diag.ratio_warnings:
-                st.warning(f"{_yl(w['year'])}: {w['warning']}")
+                year_label = _yl(w.get("year", "unknown"))
+                warning_text = w.get("warning") or w.get("message") or "Unspecified ratio warning."
+                metric = w.get("metric")
+                prefix = f"[{metric}] " if metric else ""
+                st.warning(f"{year_label}: {prefix}{warning_text}")
 
         # Anomaly workflow
         if getattr(diag, "approved_anomalies", None):
@@ -2938,23 +2942,95 @@ elif st.session_state["step"] == "dashboard":
             for inner_name, inner_bytes in expanded_product_files:
                 parsed_tables = parse_product_file(inner_bytes, inner_name)
                 if not parsed_tables["finished_products"].empty:
-                    finished_frames.append(parsed_tables["finished_products"])
+                    fp = parsed_tables["finished_products"].copy()
+                    fp["source_file"] = inner_name
+                    finished_frames.append(fp)
                 if not parsed_tables["raw_materials"].empty:
-                    raw_frames.append(parsed_tables["raw_materials"])
+                    rm = parsed_tables["raw_materials"].copy()
+                    rm["source_file"] = inner_name
+                    raw_frames.append(rm)
 
             finished_df = pd.concat(finished_frames, ignore_index=True) if finished_frames else pd.DataFrame()
             raw_df = pd.concat(raw_frames, ignore_index=True) if raw_frames else pd.DataFrame()
+
+            def _render_products_dataset(df: pd.DataFrame, title: str, key_prefix: str, default_metric: Optional[str] = None):
+                if df.empty:
+                    return
+                st.markdown(f"#### {title}")
+
+                years = pd.to_numeric(df.get("year"), errors="coerce")
+                files_count = df["source_file"].nunique() if "source_file" in df.columns else 1
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Rows", f"{len(df):,}")
+                c2.metric("Products", f"{df['product_name'].nunique():,}" if "product_name" in df.columns else "0")
+                c3.metric("Years", f"{int(years.min())}-{int(years.max())}" if years.notna().any() else "N/A")
+                c4.metric("Source Files", f"{files_count:,}")
+
+                exclude = {"year", "product_name", "product_code", "unit_of_measurement", "source_file"}
+                numeric_cols = [c for c in df.columns if c not in exclude and pd.to_numeric(df[c], errors="coerce").notna().any()]
+                if not numeric_cols:
+                    st.info("No numeric columns found for visualization.")
+                    st.dataframe(df, width='stretch', hide_index=True)
+                    return
+
+                initial_metric = default_metric if default_metric in numeric_cols else numeric_cols[0]
+                tabs_prod = st.tabs(["📊 Multi-View", "📁 Per-file Explorer", "🧾 Data Table"])
+
+                with tabs_prod[0]:
+                    metric = st.selectbox("Metric", numeric_cols, index=numeric_cols.index(initial_metric), key=f"{key_prefix}_metric")
+                    top_n = st.slider("Top products", 5, 20, 10, key=f"{key_prefix}_topn")
+
+                    viz = df.copy()
+                    viz["year_num"] = pd.to_numeric(viz["year"], errors="coerce")
+                    viz[metric] = pd.to_numeric(viz[metric], errors="coerce")
+                    viz = viz[viz["year_num"].notna() & viz[metric].notna()]
+                    if viz.empty:
+                        st.info("No plottable rows after numeric coercion.")
+                    else:
+                        agg_year = viz.groupby("year_num", as_index=False)[metric].sum().sort_values("year_num")
+                        latest_year = int(agg_year["year_num"].max())
+                        latest = viz[viz["year_num"] == latest_year].groupby("product_name", as_index=False)[metric].sum().sort_values(metric, ascending=False).head(top_n)
+                        trend_by_product = viz.groupby(["year_num", "product_name"], as_index=False)[metric].sum()
+                        top_products = set(latest["product_name"])
+                        trend_by_product = trend_by_product[trend_by_product["product_name"].isin(top_products)]
+
+                        col_l, col_r = st.columns(2)
+                        with col_l:
+                            fig_trend_total = px.line(agg_year, x="year_num", y=metric, markers=True, title=f"{metric} Trend (All Products)")
+                            st.plotly_chart(fig_trend_total, width='stretch')
+                        with col_r:
+                            fig_latest = px.bar(latest, x="product_name", y=metric, title=f"Top {top_n} Products in {latest_year}")
+                            fig_latest.update_xaxes(tickangle=-35)
+                            st.plotly_chart(fig_latest, width='stretch')
+
+                        if not trend_by_product.empty:
+                            fig_trend_prod = px.line(trend_by_product.sort_values(["product_name", "year_num"]), x="year_num", y=metric, color="product_name", markers=True, title=f"{metric} Trend by Top Products")
+                            st.plotly_chart(fig_trend_prod, width='stretch')
+
+                with tabs_prod[1]:
+                    if "source_file" in df.columns:
+                        files = sorted(df["source_file"].dropna().unique().tolist())
+                        selected_file = st.selectbox("Source file", files, key=f"{key_prefix}_file")
+                        per_file = df[df["source_file"] == selected_file].copy()
+                        st.caption(f"Rows in selected file: {len(per_file):,}")
+                        st.dataframe(per_file, width='stretch', hide_index=True)
+
+                with tabs_prod[2]:
+                    years_opt = sorted([int(y) for y in pd.to_numeric(df["year"], errors="coerce").dropna().unique().tolist()])
+                    selected_years = st.multiselect("Filter years", years_opt, default=years_opt[-min(5, len(years_opt)):], key=f"{key_prefix}_years") if years_opt else []
+                    filtered = df[df["year"].astype(str).isin({str(y) for y in selected_years})] if selected_years else df
+                    st.dataframe(filtered, width='stretch', hide_index=True)
 
             if finished_df.empty and raw_df.empty:
                 st.warning("No Finished Products or Raw Materials table could be parsed from the uploaded file.")
 
             if not finished_df.empty:
                 st.success(f"Finished Products parsed: {len(finished_df)} rows")
-                st.dataframe(finished_df, width='stretch', hide_index=True)
+                _render_products_dataset(finished_df, "Finished Products Analytics", "finished_products", default_metric="sales")
 
             if not raw_df.empty:
                 st.success(f"Raw Materials parsed: {len(raw_df)} rows")
-                st.dataframe(raw_df, width='stretch', hide_index=True)
+                _render_products_dataset(raw_df, "Raw Materials Analytics", "raw_materials", default_metric="product_value")
 
 
     with tabs[13]:
@@ -2973,10 +3049,53 @@ elif st.session_state["step"] == "dashboard":
             if not expanded_segment_files:
                 expanded_segment_files = [(segment_file.name, segment_bytes)]
 
+            def _arrow_safe_preview(df: pd.DataFrame) -> pd.DataFrame:
+                if df is None or df.empty:
+                    return pd.DataFrame()
+                out = df.copy()
+                out.columns = [" ".join(str(part) for part in c if str(part) != "") if isinstance(c, tuple) else str(c) for c in out.columns]
+                out = out.reset_index(drop=True)
+                out = out.where(pd.notna(out), "")
+                return out.applymap(lambda v: "" if v is None else str(v))
+
+            def _segment_raw_preview(file_name: str, file_bytes: bytes) -> tuple[pd.DataFrame, Optional[str]]:
+                low = file_name.lower()
+                looks_like_html = b"<table" in file_bytes.lower() or b"<html" in file_bytes.lower()
+                try:
+                    if looks_like_html or low.endswith((".html", ".htm")):
+                        html = file_bytes.decode("utf-8", errors="ignore")
+                        frames = pd.read_html(io.StringIO(html), header=None)
+                        return (_arrow_safe_preview(frames[0].head(5)), None) if frames else (pd.DataFrame(), "No HTML table found")
+                    if low.endswith((".xlsx", ".xls")):
+                        xl = pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl" if low.endswith(".xlsx") else "xlrd")
+                        if not xl.sheet_names:
+                            return pd.DataFrame(), "No sheets found"
+                        first = xl.parse(xl.sheet_names[0], header=None, dtype=str)
+                        return _arrow_safe_preview(first.head(5)), None
+                    if low.endswith(".csv"):
+                        df = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)
+                        return _arrow_safe_preview(df.head(5)), None
+                    return pd.DataFrame(), "Unsupported file extension"
+                except Exception as exc:
+                    return pd.DataFrame(), f"Preview parse failed: {exc}"
+
             segment_chunks = []
+            segment_debug_rows = []
+            segment_raw_previews = []
             for inner_name, inner_bytes in expanded_segment_files:
                 parsed_seg = parse_segment_finance_file(inner_bytes, inner_name)
-                if not parsed_seg.empty:
+                row_count = 0 if parsed_seg.empty else len(parsed_seg)
+                looks_like_html = b"<table" in inner_bytes.lower() or b"<html" in inner_bytes.lower()
+                segment_debug_rows.append({
+                    "file": inner_name,
+                    "bytes": len(inner_bytes),
+                    "rows_parsed": row_count,
+                    "looks_like_html": looks_like_html,
+                })
+                if parsed_seg.empty:
+                    preview_df, preview_err = _segment_raw_preview(inner_name, inner_bytes)
+                    segment_raw_previews.append((inner_name, preview_df, preview_err))
+                else:
                     parsed_seg["source_file"] = inner_name
                     segment_chunks.append(parsed_seg)
 
@@ -2984,6 +3103,25 @@ elif st.session_state["step"] == "dashboard":
 
             if segment_df.empty:
                 st.warning("No Segment Finance data could be parsed from the uploaded file.")
+                with st.expander("Debug details: Segment Finance parse attempt"):
+                    st.markdown(
+                        "- Ensure the archive contains Segment Finance tables (Capitaline export).\n"
+                        "- Supported member formats: `.xls`, `.xlsx`, `.html`, `.htm`, `.csv`.\n"
+                        "- HTML-in-XLS is supported when the file content contains HTML tables."
+                    )
+                    st.caption(f"Top-level upload: `{segment_file.name}` • Expanded files: {len(expanded_segment_files)}")
+                    st.dataframe(pd.DataFrame(segment_debug_rows), width='stretch', hide_index=True)
+
+                    if segment_raw_previews:
+                        st.markdown("**Show first 5 raw rows (for files with 0 parsed rows):**")
+                        for fname, preview_df, preview_err in segment_raw_previews[:3]:
+                            st.caption(f"Preview source: `{fname}`")
+                            if preview_err:
+                                st.info(preview_err)
+                            elif preview_df.empty:
+                                st.info("Preview is empty.")
+                            else:
+                                st.dataframe(preview_df, width='stretch', hide_index=True)
             else:
                 st.success(f"Parsed segment-finance datapoints: {len(segment_df)}")
 

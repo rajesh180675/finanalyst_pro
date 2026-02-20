@@ -2470,7 +2470,11 @@ def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_n
         if diag.ratio_warnings:
             st.markdown("**⚠️ Ratio Warnings (Numerical Stability)**")
             for w in diag.ratio_warnings:
-                st.warning(f"{_yl(w['year'])}: {w['warning']}")
+                year_label = _yl(w.get("year", "unknown"))
+                warning_text = w.get("warning") or w.get("message") or "Unspecified ratio warning."
+                metric = w.get("metric")
+                prefix = f"[{metric}] " if metric else ""
+                st.warning(f"{year_label}: {prefix}{warning_text}")
 
         # Anomaly workflow
         if getattr(diag, "approved_anomalies", None):

@@ -2977,18 +2977,44 @@ elif st.session_state["step"] == "dashboard":
             if not expanded_segment_files:
                 expanded_segment_files = [(segment_file.name, segment_bytes)]
 
+            def _segment_raw_preview(file_name: str, file_bytes: bytes) -> tuple[pd.DataFrame, Optional[str]]:
+                low = file_name.lower()
+                looks_like_html = b"<table" in file_bytes.lower() or b"<html" in file_bytes.lower()
+                try:
+                    if looks_like_html or low.endswith((".html", ".htm")):
+                        html = file_bytes.decode("utf-8", errors="ignore")
+                        frames = pd.read_html(io.StringIO(html), header=None)
+                        return (frames[0].head(5).fillna(""), None) if frames else (pd.DataFrame(), "No HTML table found")
+                    if low.endswith((".xlsx", ".xls")):
+                        xl = pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl" if low.endswith(".xlsx") else "xlrd")
+                        if not xl.sheet_names:
+                            return pd.DataFrame(), "No sheets found"
+                        first = xl.parse(xl.sheet_names[0], header=None, dtype=str)
+                        return first.head(5).fillna(""), None
+                    if low.endswith(".csv"):
+                        df = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)
+                        return df.head(5).fillna(""), None
+                    return pd.DataFrame(), "Unsupported file extension"
+                except Exception as exc:
+                    return pd.DataFrame(), f"Preview parse failed: {exc}"
+
             segment_chunks = []
             segment_debug_rows = []
+            segment_raw_previews = []
             for inner_name, inner_bytes in expanded_segment_files:
                 parsed_seg = parse_segment_finance_file(inner_bytes, inner_name)
                 row_count = 0 if parsed_seg.empty else len(parsed_seg)
+                looks_like_html = b"<table" in inner_bytes.lower() or b"<html" in inner_bytes.lower()
                 segment_debug_rows.append({
                     "file": inner_name,
                     "bytes": len(inner_bytes),
                     "rows_parsed": row_count,
-                    "looks_like_html": b"<table" in inner_bytes.lower() or b"<html" in inner_bytes.lower(),
+                    "looks_like_html": looks_like_html,
                 })
-                if not parsed_seg.empty:
+                if parsed_seg.empty:
+                    preview_df, preview_err = _segment_raw_preview(inner_name, inner_bytes)
+                    segment_raw_previews.append((inner_name, preview_df, preview_err))
+                else:
                     parsed_seg["source_file"] = inner_name
                     segment_chunks.append(parsed_seg)
 
@@ -3004,6 +3030,17 @@ elif st.session_state["step"] == "dashboard":
                     )
                     st.caption(f"Top-level upload: `{segment_file.name}` • Expanded files: {len(expanded_segment_files)}")
                     st.dataframe(pd.DataFrame(segment_debug_rows), width='stretch', hide_index=True)
+
+                    if segment_raw_previews:
+                        st.markdown("**Show first 5 raw rows (for files with 0 parsed rows):**")
+                        for fname, preview_df, preview_err in segment_raw_previews[:3]:
+                            st.caption(f"Preview source: `{fname}`")
+                            if preview_err:
+                                st.info(preview_err)
+                            elif preview_df.empty:
+                                st.info("Preview is empty.")
+                            else:
+                                st.dataframe(preview_df, width='stretch', hide_index=True)
             else:
                 st.success(f"Parsed segment-finance datapoints: {len(segment_df)}")
 

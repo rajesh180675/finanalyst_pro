@@ -25,6 +25,7 @@ from fin_platform.parser import (
     classify_metric,
     parse_file,
     expand_uploaded_files,
+    parse_product_file,
 )
 from fin_platform.metric_patterns import (
     match_metric,
@@ -2025,3 +2026,35 @@ class TestNissimProfitabilityAnalysis:
         assert r.nissim_profitability is not None
         # OPM is IS-based, must be computed
         assert len(r.nissim_profitability.operating.opm) > 0
+
+
+class TestProductTableParsing:
+    def test_parse_finished_products_html_xls(self):
+        html = b"""
+        <html><body><table>
+        <tr><td>Products Finished Products VST Industries</td></tr>
+        <tr><td>Year</td><td>Product Name</td><td>Product Code</td><td>Unit of Measurement</td><td>% of STO</td><td>Sales</td></tr>
+        <tr><td>2025</td><td>Cigarettes (Million)</td><td>24022000</td><td>No</td><td>73.66</td><td>1332.92</td></tr>
+        </table></body></html>
+        """
+        parsed = parse_product_file(html, "finished_products.xls")
+        assert not parsed["finished_products"].empty
+        row = parsed["finished_products"].iloc[0]
+        assert int(row["year"]) == 2025
+        assert row["product_name"] == "Cigarettes (Million)"
+        assert row["pct_of_sto"] == pytest.approx(73.66)
+
+    def test_parse_raw_materials_html(self):
+        html = b"""
+        <html><body><table>
+        <tr><td>Products Raw Materials VST Industries</td></tr>
+        <tr><td>Year</td><td>Product Name</td><td>Product Code</td><td>Unit of Measurement</td><td>Product Quantity</td><td>Product Value</td><td>Cost/Unit -Unit Curr.</td></tr>
+        <tr><td>2024</td><td>Raw Material Consumed</td><td>00011028</td><td>NA</td><td>0</td><td>784.16</td><td>0</td></tr>
+        </table></body></html>
+        """
+        parsed = parse_product_file(html, "raw_materials.html")
+        assert not parsed["raw_materials"].empty
+        row = parsed["raw_materials"].iloc[0]
+        assert int(row["year"]) == 2024
+        assert row["product_name"] == "Raw Material Consumed"
+        assert row["product_value"] == pytest.approx(784.16)

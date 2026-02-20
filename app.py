@@ -35,7 +35,7 @@ import streamlit.components.v1 as components
 from fin_platform.types import (
     FinancialData, MappingDict, PNOptions,
 )
-from fin_platform.parser import parse_file, merge_financial_data, expand_uploaded_files
+from fin_platform.parser import parse_file, merge_financial_data, expand_uploaded_files, parse_product_file
 from fin_platform.metric_patterns import (
     auto_map_metrics, get_all_targets, get_pattern_coverage,
     get_detailed_matches, get_targets_by_statement,
@@ -2884,7 +2884,7 @@ elif st.session_state["step"] == "dashboard":
     tabs = st.tabs([
         "🏠 Overview", "🐛 Debug", "📐 Penman-Nissim", "🧩 Capitaline Ind AS", "📊 Ratios", "📈 Trends",
         "🛡️ Scoring", "💰 Valuation", "💵 FCF & Value Drivers",
-        "📋 Earnings Quality", "🗺️ Mappings", "🔍 Data Explorer",
+        "📋 Earnings Quality", "🗺️ Mappings", "🔍 Data Explorer", "📦 Products"
     ])
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -2892,6 +2892,46 @@ elif st.session_state["step"] == "dashboard":
     # ──────────────────────────────────────────────────────────────────────────
     with tabs[0]:
         _render_overview(analysis, pn_result, scoring, years, data, mappings)
+
+
+    with tabs[12]:
+        st.markdown("### 📦 Products (Finished Products / Raw Materials)")
+        st.caption("Upload Capitaline ZIP/XLS/HTML exports containing product tables. HTML-in-XLS is supported.")
+
+        product_file = st.file_uploader(
+            "Upload product data file",
+            type=["zip", "xls", "xlsx", "html", "htm", "csv"],
+            key="products_uploader",
+        )
+
+        if product_file is not None:
+            product_bytes = product_file.read()
+            expanded_product_files = expand_uploaded_files(product_bytes, product_file.name)
+            if not expanded_product_files:
+                expanded_product_files = [(product_file.name, product_bytes)]
+
+            finished_frames = []
+            raw_frames = []
+            for inner_name, inner_bytes in expanded_product_files:
+                parsed_tables = parse_product_file(inner_bytes, inner_name)
+                if not parsed_tables["finished_products"].empty:
+                    finished_frames.append(parsed_tables["finished_products"])
+                if not parsed_tables["raw_materials"].empty:
+                    raw_frames.append(parsed_tables["raw_materials"])
+
+            finished_df = pd.concat(finished_frames, ignore_index=True) if finished_frames else pd.DataFrame()
+            raw_df = pd.concat(raw_frames, ignore_index=True) if raw_frames else pd.DataFrame()
+
+            if finished_df.empty and raw_df.empty:
+                st.warning("No Finished Products or Raw Materials table could be parsed from the uploaded file.")
+
+            if not finished_df.empty:
+                st.success(f"Finished Products parsed: {len(finished_df)} rows")
+                st.dataframe(finished_df, width='stretch', hide_index=True)
+
+            if not raw_df.empty:
+                st.success(f"Raw Materials parsed: {len(raw_df)} rows")
+                st.dataframe(raw_df, width='stretch', hide_index=True)
 
     # ──────────────────────────────────────────────────────────────────────────
     # TAB 2: DEBUG

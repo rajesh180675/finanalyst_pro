@@ -549,6 +549,18 @@ SEGMENT_SECTION_TOKENS = {
 def _parse_segment_finance_frame(df: pd.DataFrame) -> pd.DataFrame:
     raw = df.fillna("").astype(str)
 
+    def _flatten_col_name(col: Any) -> str:
+        if isinstance(col, tuple):
+            return " ".join(str(part).strip() for part in col if str(part).strip())
+        return str(col).strip()
+
+    col_header = [_flatten_col_name(c) for c in list(df.columns)]
+    col_year_cols: List[Tuple[int, str]] = []
+    for j, c in enumerate(col_header):
+        yr = extract_year(c)
+        if yr:
+            col_year_cols.append((j, yr))
+
     best_row = None
     best_year_cols: List[Tuple[int, str]] = []
     for i in range(min(40, len(raw))):
@@ -562,19 +574,48 @@ def _parse_segment_finance_frame(df: pd.DataFrame) -> pd.DataFrame:
             best_year_cols = year_cols
             best_row = i
 
-    if best_row is None or len(best_year_cols) < 3:
-        return pd.DataFrame()
+    if len(col_year_cols) > len(best_year_cols):
+        best_year_cols = col_year_cols
+        best_row = -1
+        header = col_header
+        data_start = 0
+    else:
+        if best_row is None or len(best_year_cols) < 3:
+            return pd.DataFrame()
+        header = [str(x).strip() for x in raw.iloc[best_row].tolist()]
+        data_start = best_row + 1
+    year_idx_set = {idx for idx, _ in best_year_cols}
+    non_year_cols = [j for j in range(len(header)) if j not in year_idx_set]
 
-    header = [str(x).strip() for x in raw.iloc[best_row].tolist()]
-    non_year_cols = [j for j in range(len(header)) if j not in {idx for idx, _ in best_year_cols}]
-    label_col = non_year_cols[0] if non_year_cols else 0
-    segment_col = non_year_cols[1] if len(non_year_cols) > 1 else None
+    preferred_label_tokens = {"year", "particulars", "metric", "item", "description"}
+    label_col = None
+    for j in non_year_cols:
+        if normalize_metric_name(header[j]).lower() in preferred_label_tokens:
+            label_col = j
+            break
+    if label_col is None:
+        # Fallback: pick the column with most non-empty text below detected header row.
+        best_count = -1
+        for j in non_year_cols:
+            col_vals = raw.iloc[best_row + 1 :, j].astype(str).str.strip()
+            non_empty = int((col_vals != "").sum())
+            if non_empty > best_count:
+                best_count = non_empty
+                label_col = j
+    if label_col is None:
+        label_col = non_year_cols[0] if non_year_cols else 0
+
+    segment_col = None
+    for j in non_year_cols:
+        if j != label_col:
+            segment_col = j
+            break
 
     records = []
     current_section = "General"
     current_metric = "Unknown"
 
-    for i in range(best_row + 1, len(raw)):
+    for i in range(data_start, len(raw)):
         row = raw.iloc[i].tolist()
         label = normalize_metric_name(row[label_col] if label_col < len(row) else "")
         if not label:
@@ -632,20 +673,40 @@ def _parse_segment_finance_frame(df: pd.DataFrame) -> pd.DataFrame:
 
 def parse_segment_finance_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
     """Parse Capitaline Segment Finance exports from html/xls/xlsx/csv (including html-in-xls)."""
+    def _parse_frames_from_bytes(raw_bytes: bytes, source_name: str) -> List[pd.DataFrame]:
+        source_lower = source_name.lower()
+        try:
+            if _looks_like_html(raw_bytes) or source_lower.endswith((".html", ".htm")):
+                html = _decode_text(raw_bytes)
+                return [df for df in pd.read_html(io.StringIO(html), header=None)]
+
+            if source_lower.endswith((".xlsx", ".xls")):
+                xl = pd.ExcelFile(
+                    io.BytesIO(raw_bytes),
+                    engine="openpyxl" if source_lower.endswith(".xlsx") else "xlrd",
+                )
+                return [xl.parse(sheet_name, header=None, dtype=str) for sheet_name in xl.sheet_names]
+
+            if source_lower.endswith(".csv"):
+                return [pd.read_csv(io.BytesIO(raw_bytes), header=None, dtype=str)]
+        except Exception:
+            return []
+        return []
+
     frames: List[pd.DataFrame] = []
     name = filename.lower()
 
-    try:
-        if name.endswith((".html", ".htm")) or (name.endswith(".xls") and _looks_like_html(file_bytes)):
-            html = _decode_text(file_bytes)
-            frames = [df for df in pd.read_html(io.StringIO(html), header=None)]
-        elif name.endswith((".xlsx", ".xls")):
-            xl = pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl" if name.endswith(".xlsx") else "xlrd")
-            frames = [xl.parse(sheet_name, header=None, dtype=str) for sheet_name in xl.sheet_names]
-        elif name.endswith(".csv"):
-            frames = [pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)]
-    except Exception:
-        return pd.DataFrame()
+    if name.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    frames.extend(_parse_frames_from_bytes(zf.read(info), info.filename))
+        except Exception:
+            return pd.DataFrame()
+    else:
+        frames = _parse_frames_from_bytes(file_bytes, filename)
 
     chunks = []
     for frame in frames:

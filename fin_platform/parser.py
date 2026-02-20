@@ -462,13 +462,25 @@ def _find_product_header_row(df: pd.DataFrame) -> Optional[int]:
 
 
 def _materialize_product_frame(df: pd.DataFrame) -> pd.DataFrame:
-    hdr_idx = _find_product_header_row(df)
-    if hdr_idx is None:
-        return pd.DataFrame()
+    def _flatten_col_name(col: Any) -> str:
+        if isinstance(col, tuple):
+            return " ".join(str(part).strip() for part in col if str(part).strip())
+        return str(col).strip()
 
-    header = df.iloc[hdr_idx].tolist()
-    body = df.iloc[hdr_idx + 1:].copy()
-    body.columns = _normalize_product_columns(header)
+    col_header = [_flatten_col_name(c) for c in list(df.columns)]
+    normalized_col_header = _normalize_product_columns(col_header)
+
+    if "year" in normalized_col_header and "product_name" in normalized_col_header:
+        body = df.copy()
+        body.columns = normalized_col_header
+    else:
+        hdr_idx = _find_product_header_row(df)
+        if hdr_idx is None:
+            return pd.DataFrame()
+        header = df.iloc[hdr_idx].tolist()
+        body = df.iloc[hdr_idx + 1:].copy()
+        body.columns = _normalize_product_columns(header)
+
     body = body.loc[:, ~body.columns.duplicated()].copy()
     body = body.dropna(axis=0, how="all")
     if body.empty:

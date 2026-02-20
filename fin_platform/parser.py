@@ -549,6 +549,18 @@ SEGMENT_SECTION_TOKENS = {
 def _parse_segment_finance_frame(df: pd.DataFrame) -> pd.DataFrame:
     raw = df.fillna("").astype(str)
 
+    def _flatten_col_name(col: Any) -> str:
+        if isinstance(col, tuple):
+            return " ".join(str(part).strip() for part in col if str(part).strip())
+        return str(col).strip()
+
+    col_header = [_flatten_col_name(c) for c in list(df.columns)]
+    col_year_cols: List[Tuple[int, str]] = []
+    for j, c in enumerate(col_header):
+        yr = extract_year(c)
+        if yr:
+            col_year_cols.append((j, yr))
+
     best_row = None
     best_year_cols: List[Tuple[int, str]] = []
     for i in range(min(40, len(raw))):
@@ -562,10 +574,16 @@ def _parse_segment_finance_frame(df: pd.DataFrame) -> pd.DataFrame:
             best_year_cols = year_cols
             best_row = i
 
-    if best_row is None or len(best_year_cols) < 3:
-        return pd.DataFrame()
-
-    header = [str(x).strip() for x in raw.iloc[best_row].tolist()]
+    if len(col_year_cols) > len(best_year_cols):
+        best_year_cols = col_year_cols
+        best_row = -1
+        header = col_header
+        data_start = 0
+    else:
+        if best_row is None or len(best_year_cols) < 3:
+            return pd.DataFrame()
+        header = [str(x).strip() for x in raw.iloc[best_row].tolist()]
+        data_start = best_row + 1
     year_idx_set = {idx for idx, _ in best_year_cols}
     non_year_cols = [j for j in range(len(header)) if j not in year_idx_set]
 
@@ -597,7 +615,7 @@ def _parse_segment_finance_frame(df: pd.DataFrame) -> pd.DataFrame:
     current_section = "General"
     current_metric = "Unknown"
 
-    for i in range(best_row + 1, len(raw)):
+    for i in range(data_start, len(raw)):
         row = raw.iloc[i].tolist()
         label = normalize_metric_name(row[label_col] if label_col < len(row) else "")
         if not label:

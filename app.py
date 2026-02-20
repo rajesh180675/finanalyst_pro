@@ -2942,23 +2942,95 @@ elif st.session_state["step"] == "dashboard":
             for inner_name, inner_bytes in expanded_product_files:
                 parsed_tables = parse_product_file(inner_bytes, inner_name)
                 if not parsed_tables["finished_products"].empty:
-                    finished_frames.append(parsed_tables["finished_products"])
+                    fp = parsed_tables["finished_products"].copy()
+                    fp["source_file"] = inner_name
+                    finished_frames.append(fp)
                 if not parsed_tables["raw_materials"].empty:
-                    raw_frames.append(parsed_tables["raw_materials"])
+                    rm = parsed_tables["raw_materials"].copy()
+                    rm["source_file"] = inner_name
+                    raw_frames.append(rm)
 
             finished_df = pd.concat(finished_frames, ignore_index=True) if finished_frames else pd.DataFrame()
             raw_df = pd.concat(raw_frames, ignore_index=True) if raw_frames else pd.DataFrame()
+
+            def _render_products_dataset(df: pd.DataFrame, title: str, key_prefix: str, default_metric: Optional[str] = None):
+                if df.empty:
+                    return
+                st.markdown(f"#### {title}")
+
+                years = pd.to_numeric(df.get("year"), errors="coerce")
+                files_count = df["source_file"].nunique() if "source_file" in df.columns else 1
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Rows", f"{len(df):,}")
+                c2.metric("Products", f"{df['product_name'].nunique():,}" if "product_name" in df.columns else "0")
+                c3.metric("Years", f"{int(years.min())}-{int(years.max())}" if years.notna().any() else "N/A")
+                c4.metric("Source Files", f"{files_count:,}")
+
+                exclude = {"year", "product_name", "product_code", "unit_of_measurement", "source_file"}
+                numeric_cols = [c for c in df.columns if c not in exclude and pd.to_numeric(df[c], errors="coerce").notna().any()]
+                if not numeric_cols:
+                    st.info("No numeric columns found for visualization.")
+                    st.dataframe(df, width='stretch', hide_index=True)
+                    return
+
+                initial_metric = default_metric if default_metric in numeric_cols else numeric_cols[0]
+                tabs_prod = st.tabs(["📊 Multi-View", "📁 Per-file Explorer", "🧾 Data Table"])
+
+                with tabs_prod[0]:
+                    metric = st.selectbox("Metric", numeric_cols, index=numeric_cols.index(initial_metric), key=f"{key_prefix}_metric")
+                    top_n = st.slider("Top products", 5, 20, 10, key=f"{key_prefix}_topn")
+
+                    viz = df.copy()
+                    viz["year_num"] = pd.to_numeric(viz["year"], errors="coerce")
+                    viz[metric] = pd.to_numeric(viz[metric], errors="coerce")
+                    viz = viz[viz["year_num"].notna() & viz[metric].notna()]
+                    if viz.empty:
+                        st.info("No plottable rows after numeric coercion.")
+                    else:
+                        agg_year = viz.groupby("year_num", as_index=False)[metric].sum().sort_values("year_num")
+                        latest_year = int(agg_year["year_num"].max())
+                        latest = viz[viz["year_num"] == latest_year].groupby("product_name", as_index=False)[metric].sum().sort_values(metric, ascending=False).head(top_n)
+                        trend_by_product = viz.groupby(["year_num", "product_name"], as_index=False)[metric].sum()
+                        top_products = set(latest["product_name"])
+                        trend_by_product = trend_by_product[trend_by_product["product_name"].isin(top_products)]
+
+                        col_l, col_r = st.columns(2)
+                        with col_l:
+                            fig_trend_total = px.line(agg_year, x="year_num", y=metric, markers=True, title=f"{metric} Trend (All Products)")
+                            st.plotly_chart(fig_trend_total, width='stretch')
+                        with col_r:
+                            fig_latest = px.bar(latest, x="product_name", y=metric, title=f"Top {top_n} Products in {latest_year}")
+                            fig_latest.update_xaxes(tickangle=-35)
+                            st.plotly_chart(fig_latest, width='stretch')
+
+                        if not trend_by_product.empty:
+                            fig_trend_prod = px.line(trend_by_product.sort_values(["product_name", "year_num"]), x="year_num", y=metric, color="product_name", markers=True, title=f"{metric} Trend by Top Products")
+                            st.plotly_chart(fig_trend_prod, width='stretch')
+
+                with tabs_prod[1]:
+                    if "source_file" in df.columns:
+                        files = sorted(df["source_file"].dropna().unique().tolist())
+                        selected_file = st.selectbox("Source file", files, key=f"{key_prefix}_file")
+                        per_file = df[df["source_file"] == selected_file].copy()
+                        st.caption(f"Rows in selected file: {len(per_file):,}")
+                        st.dataframe(per_file, width='stretch', hide_index=True)
+
+                with tabs_prod[2]:
+                    years_opt = sorted([int(y) for y in pd.to_numeric(df["year"], errors="coerce").dropna().unique().tolist()])
+                    selected_years = st.multiselect("Filter years", years_opt, default=years_opt[-min(5, len(years_opt)):], key=f"{key_prefix}_years") if years_opt else []
+                    filtered = df[df["year"].astype(str).isin({str(y) for y in selected_years})] if selected_years else df
+                    st.dataframe(filtered, width='stretch', hide_index=True)
 
             if finished_df.empty and raw_df.empty:
                 st.warning("No Finished Products or Raw Materials table could be parsed from the uploaded file.")
 
             if not finished_df.empty:
                 st.success(f"Finished Products parsed: {len(finished_df)} rows")
-                st.dataframe(finished_df, width='stretch', hide_index=True)
+                _render_products_dataset(finished_df, "Finished Products Analytics", "finished_products", default_metric="sales")
 
             if not raw_df.empty:
                 st.success(f"Raw Materials parsed: {len(raw_df)} rows")
-                st.dataframe(raw_df, width='stretch', hide_index=True)
+                _render_products_dataset(raw_df, "Raw Materials Analytics", "raw_materials", default_metric="product_value")
 
 
     with tabs[13]:

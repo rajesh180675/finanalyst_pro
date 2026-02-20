@@ -22,7 +22,10 @@ Covers:
   - Holding Company auto-detection
 """
 from __future__ import annotations
+import hashlib
+import json
 import math
+import os
 from typing import Dict, List, Optional, Tuple, Any
 from itertools import permutations
 
@@ -110,6 +113,43 @@ def _get_capex_fallback(data: FinancialData, year: str) -> Optional[float]:
     return best
 
 
+def _tiered_gap_status(abs_gap: float) -> str:
+    """Tiered reconciliation tolerance for rounded Capitaline figures."""
+    if abs_gap < 0.01:
+        return "ok"
+    if abs_gap <= 0.1:
+        return "warn"
+    return "fail"
+
+
+def _series_fingerprint(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _load_anomaly_registry(path: str) -> Dict[str, Any]:
+    if not os.path.exists(path):
+        return {"version": 1, "companies": {}}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {"version": 1, "companies": {}}
+        data.setdefault("version", 1)
+        data.setdefault("companies", {})
+        return data
+    except Exception:
+        return {"version": 1, "companies": {}}
+
+
+def _save_anomaly_registry(path: str, registry: Dict[str, Any]) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(registry, f, indent=2, sort_keys=True)
+
+
 def _get_inventory_fallback(data: FinancialData, year: str) -> Optional[float]:
     """Fallback for Inventory when the mapped row has value=0 (e.g. mapped to a sub-item).
 
@@ -137,6 +177,38 @@ def _get_inventory_fallback(data: FinancialData, year: str) -> Optional[float]:
             if isinstance(raw, (int, float)) and not math.isnan(raw) and raw != 0:
                 return float(raw)
     return None
+
+
+def _capex_bug_auto_heuristic(data: FinancialData, years: List[str]) -> Tuple[bool, Optional[str]]:
+    """Detect Capitaline CapEx header bug and force fallback when clearly broken."""
+    official_sum = 0.0
+    purchase_sum = 0.0
+    for y in years:
+        off = 0.0
+        for key, vals in data.items():
+            if not key.startswith("CashFlow::"):
+                continue
+            metric = key.split("::", 1)[-1].strip().lower()
+            if metric == "capital expenditure":
+                v = vals.get(y)
+                if isinstance(v, (int, float)) and not math.isnan(v):
+                    off += abs(float(v))
+
+        fb = _get_capex_fallback(data, y)
+        if fb is not None:
+            purchase_sum += abs(fb)
+        official_sum += off
+
+    if purchase_sum <= 0:
+        return False, None
+    ratio = official_sum / purchase_sum
+    if ratio < 0.01:
+        note = (
+            "Capitaline CapEx header bug auto-detected: summed 'Capital Expenditure' "
+            f"is {ratio * 100:.2f}% of fixed-asset purchase lines; using fallback field permanently."
+        )
+        return True, note
+    return False, None
 
 
 def derive_val(
@@ -687,9 +759,12 @@ def penman_nissim_analysis(
     terminal_growth = options.terminal_growth
     forecast_years_n = options.forecast_years
     forecast_method = options.forecast_method
+    company_id = options.company_id
+    anomaly_registry_path = options.anomaly_registry_path
 
     assumptions: Dict[str, List[str]] = {}
     ratio_warnings: List[Dict[str, str]] = []
+    capex_force_fallback, capex_heuristic_note = _capex_bug_auto_heuristic(data, years)
 
     def add_assumption(y: str, msg: str) -> None:
         assumptions.setdefault(y, []).append(msg)
@@ -734,6 +809,7 @@ def penman_nissim_analysis(
                 return float(vals[y])
         return None
 
+    max_noa_recon_gap = 0.0
     for y in years:
         notes: List[str] = []
         ta = g("Total Assets", y)
@@ -762,7 +838,8 @@ def penman_nissim_analysis(
 
         oa = (ta - fa) if (ta is not None and fa is not None) else None
         fl = _sum(st_debt, lt_debt, lease)
-        tl = ((ta - te) if (ta is not None and te is not None) else gv("Total Liabilities", y))
+        tl_direct = gv("Total Liabilities", y)
+        tl = tl_direct if tl_direct is not None else ((ta - te) if (ta is not None and te is not None) else None)
         ol = (max(tl - fl, 0.0) if (tl is not None and fl is not None) else None)
         noa = ((oa - ol) if (oa is not None and ol is not None) else None)
         nfa = ((fa - fl) if (fa is not None and fl is not None) else None)
@@ -793,7 +870,9 @@ def penman_nissim_analysis(
 
         if noa is not None and nfa is not None and te is not None:
             gap = noa + nfa - te
-            if abs(gap) > max(1.0, abs(te) * 0.01):
+            abs_gap = abs(gap)
+            max_noa_recon_gap = max(max_noa_recon_gap, abs_gap)
+            if _tiered_gap_status(abs_gap) != "ok":
                 notes.append(f"NOA + NFA ≠ Equity (gap {gap:.2f})")
 
         classification_audit.append(PNClassificationAuditRow(
@@ -957,9 +1036,11 @@ def penman_nissim_analysis(
 
         # PN reconciliation check
         if noa is not None and nfa is not None and ce is not None:
+            gap = noa + nfa - ce
             pn_reconciliation.append({
                 "year": y, "noa": noa, "nfa": nfa, "equity": ce,
-                "gap": noa + nfa - ce,
+                "gap": gap,
+                "status": _tiered_gap_status(abs(gap)),
             })
 
         # Balance sheet integrity checks
@@ -1131,7 +1212,7 @@ def penman_nissim_analysis(
 
     for y in years:
         ocf = g("Operating Cash Flow", y)
-        capex_raw = g("Capital Expenditure", y)
+        capex_raw = None if capex_force_fallback else g("Capital Expenditure", y)
         if capex_raw is None or abs(capex_raw) < 1e-9:
             capex_raw = _get_capex_fallback(data, y)
         capex = abs(capex_raw) if capex_raw is not None else None
@@ -1156,9 +1237,65 @@ def penman_nissim_analysis(
     # ── Fix suggestions ───────────────────────────────────────────────────────
     fix_suggestions: List[str] = []
     latest_year = years[-1] if years else ""
-    roe_gap = pn_ratios["ROE Gap %"].get(latest_year)
-    if roe_gap is not None and roe_gap > 2:
-        fix_suggestions.append("ROE gap >2%: verify Total Equity, Interest Expense, Other Income, and PBT mappings.")
+
+    # Dead-man switch: NOA + NFA must reconcile to Equity within hard absolute bound.
+    if max_noa_recon_gap > 0.01:
+        raise ValueError(
+            "Hard fail: NOA + NFA − Equity reconciliation gap exceeded 0.01 crore "
+            f"(max observed {max_noa_recon_gap:.4f})."
+        )
+
+    # ROE anomaly registry (validated exemptions with automatic revocation on data change)
+    registry = _load_anomaly_registry(anomaly_registry_path)
+    company_registry = registry.setdefault("companies", {}).setdefault(company_id, {})
+    roe_registry = company_registry.setdefault("roe_gap", {})
+    approved_anomalies: List[Dict[str, Any]] = []
+    unapproved_anomalies: List[Dict[str, Any]] = []
+
+    for y in years:
+        roe_gap = pn_ratios["ROE Gap %"].get(y)
+        if roe_gap is None or roe_gap <= 2:
+            continue
+
+        payload = {
+            "year": y,
+            "roe_gap": round(float(roe_gap), 6),
+            "roe_actual": pn_ratios["ROE %"].get(y),
+            "roe_pn": pn_ratios["ROE (PN) %"].get(y),
+            "equity": reformulated_bs["Common Equity"].get(y),
+            "interest_expense": reformulated_is["Interest Expense"].get(y),
+            "other_income": reformulated_is["Other Income"].get(y),
+            "pbt": gv("Income Before Tax", y),
+            "tax": gv("Tax Expense", y),
+            "net_income": reformulated_is["Net Income"].get(y),
+        }
+        fingerprint = _series_fingerprint(payload)
+        entry = roe_registry.get(y)
+        anomaly_row = {"year": y, "gap": roe_gap, "fingerprint": fingerprint}
+
+        if isinstance(entry, dict) and entry.get("fingerprint") == fingerprint and entry.get("approved") is True:
+            approved_anomalies.append({**anomaly_row, "note": entry.get("note", "")})
+        else:
+            unapproved_anomalies.append(anomaly_row)
+
+    # Revoke stale approvals automatically by pruning rows not approved under current fingerprint.
+    fresh_registry: Dict[str, Any] = {}
+    for row in approved_anomalies:
+        existing = roe_registry.get(row["year"], {})
+        fresh_registry[row["year"]] = {
+            "approved": True,
+            "fingerprint": row["fingerprint"],
+            "note": existing.get("note", ""),
+        }
+    company_registry["roe_gap"] = fresh_registry
+    if approved_anomalies or unapproved_anomalies or os.path.exists(anomaly_registry_path):
+        _save_anomaly_registry(anomaly_registry_path, registry)
+
+    if unapproved_anomalies:
+        fix_suggestions.append(
+            "Unapproved ROE gap anomaly detected: verify mappings or approve via anomaly exemption registry."
+        )
+
     if not reformulated_is["NOPAT"]:
         fix_suggestions.append("NOPAT missing: verify Revenue, EBIT, Tax Expense mappings.")
     if not reformulated_bs["Net Operating Assets"]:
@@ -1221,13 +1358,13 @@ def penman_nissim_analysis(
             continue
 
         expected, gap, note = picked
-        tol = max(1.0, abs(ni) * 0.02)
+        status = _tiered_gap_status(abs(gap))
         income_stmt_checks.append(ReconciliationRow(
             year=y,
             expected=expected,
             actual=ni,
             gap=gap,
-            status="ok" if abs(gap) <= tol else "warn",
+            status=status,
             note=note,
         ))
 
@@ -1658,6 +1795,9 @@ def penman_nissim_analysis(
         current_components_checks=current_components_checks,
         classification_audit=classification_audit,
         ratio_warnings=ratio_warnings,
+        approved_anomalies=approved_anomalies,
+        unapproved_anomalies=unapproved_anomalies,
+        capex_heuristic_note=capex_heuristic_note,
     )
 
     # ── Nissim (2023) Profitability Analysis ───────────────────────────────

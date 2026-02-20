@@ -150,6 +150,17 @@ def _save_anomaly_registry(path: str, registry: Dict[str, Any]) -> None:
         json.dump(registry, f, indent=2, sort_keys=True)
 
 
+def _find_raw_metric_value(data: FinancialData, year: str, include_tokens: Tuple[str, ...]) -> Optional[float]:
+    """Return first usable value for a metric name containing all include tokens."""
+    for key, vals in data.items():
+        label = key.split("::", 1)[-1].strip().lower()
+        if all(tok in label for tok in include_tokens):
+            raw = vals.get(year)
+            if isinstance(raw, (int, float)) and not math.isnan(raw):
+                return float(raw)
+    return None
+
+
 def _get_inventory_fallback(data: FinancialData, year: str) -> Optional[float]:
     """Fallback for Inventory when the mapped row has value=0 (e.g. mapped to a sub-item).
 
@@ -1127,11 +1138,19 @@ def penman_nissim_analysis(
                     "warning": (f"Avg NOA is small vs assets (|AvgNOA|={avg_noa:.2f}; "
                                 f"threshold≈{materiality:.2f}). RNOA/NOAT may be unstable. Use ROOA.")
                 })
-            if abs(avg_noa) > 10:
-                pn_ratios["RNOA %"][y] = nopat / avg_noa * 100
+            if abs(avg_noa) > materiality:
+                # Mathematical clamping to avoid blow-ups in edge periods
+                pn_ratios["RNOA %"][y] = max(-1000.0, min(1000.0, nopat / avg_noa * 100))
+            elif avg_oa is not None and abs(avg_oa) > 10:
+                # Automatic fallback when NOA is too small relative to TA
+                pn_ratios["RNOA %"][y] = max(-1000.0, min(1000.0, nopat / avg_oa * 100))
+                ratio_warnings.append({
+                    "year": y,
+                    "warning": "RNOA fallback applied: using ROOA proxy because NOA < 5% of Total Assets.",
+                })
 
         if avg_oa is not None and abs(avg_oa) > 10:
-            pn_ratios["ROOA %"][y] = nopat / avg_oa * 100
+            pn_ratios["ROOA %"][y] = max(-1000.0, min(1000.0, nopat / avg_oa * 100))
 
         if rev > 0:
             pn_ratios["OPM %"][y] = nopat / rev * 100
@@ -1252,6 +1271,31 @@ def penman_nissim_analysis(
     approved_anomalies: List[Dict[str, Any]] = []
     unapproved_anomalies: List[Dict[str, Any]] = []
 
+    def _auto_reconcile_roe_gap(year: str, gap_pct: float) -> Optional[Dict[str, Any]]:
+        """Try to explain ROE gap from OCI / prior-period-adjustment style lines."""
+        equity = reformulated_bs["Common Equity"].get(year)
+        if equity is None or abs(equity) < 1e-9:
+            return None
+
+        oci = _find_raw_metric_value(data, year, ("other", "comprehensive", "income")) or 0.0
+        pya = (
+            _find_raw_metric_value(data, year, ("prior", "period", "adjust"))
+            or _find_raw_metric_value(data, year, ("prior", "year", "adjust"))
+            or 0.0
+        )
+        candidate_pct = abs((oci + pya) / equity * 100)
+        if _tiered_gap_status(abs(candidate_pct - gap_pct)) in ("ok", "warn"):
+            return {
+                "year": year,
+                "gap": gap_pct,
+                "auto_reconciled": True,
+                "oci": oci,
+                "prior_adjustment": pya,
+                "explained_pct": candidate_pct,
+                "note": "Auto-reconciled using OCI/Prior Year Adjustment scan.",
+            }
+        return None
+
     for y in years:
         roe_gap = pn_ratios["ROE Gap %"].get(y)
         if roe_gap is None or roe_gap <= 2:
@@ -1276,7 +1320,11 @@ def penman_nissim_analysis(
         if isinstance(entry, dict) and entry.get("fingerprint") == fingerprint and entry.get("approved") is True:
             approved_anomalies.append({**anomaly_row, "note": entry.get("note", "")})
         else:
-            unapproved_anomalies.append(anomaly_row)
+            auto_fix = _auto_reconcile_roe_gap(y, float(roe_gap))
+            if auto_fix is not None:
+                approved_anomalies.append({**anomaly_row, **auto_fix})
+            else:
+                unapproved_anomalies.append(anomaly_row)
 
     # Revoke stale approvals automatically by pruning rows not approved under current fingerprint.
     fresh_registry: Dict[str, Any] = {}
@@ -1286,6 +1334,9 @@ def penman_nissim_analysis(
             "approved": True,
             "fingerprint": row["fingerprint"],
             "note": existing.get("note", ""),
+            "auto_reconciled": row.get("auto_reconciled", False),
+            "oci": row.get("oci"),
+            "prior_adjustment": row.get("prior_adjustment"),
         }
     company_registry["roe_gap"] = fresh_registry
     if approved_anomalies or unapproved_anomalies or os.path.exists(anomaly_registry_path):

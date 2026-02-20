@@ -20,6 +20,7 @@ Tabs:
 import io
 import json
 import math
+import os
 import zipfile
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -2265,6 +2266,42 @@ def _build_compact_input_payload(company_name: str, years: List[str], data: Fina
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
 
+def _load_anomaly_registry(path: str) -> Dict[str, Any]:
+    if not os.path.exists(path):
+        return {"version": 1, "companies": {}}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+        if not isinstance(obj, dict):
+            return {"version": 1, "companies": {}}
+        obj.setdefault("version", 1)
+        obj.setdefault("companies", {})
+        return obj
+    except Exception:
+        return {"version": 1, "companies": {}}
+
+
+def _save_anomaly_registry(path: str, registry: Dict[str, Any]) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(registry, f, indent=2, sort_keys=True)
+
+
+def _approve_unapproved_anomaly(company_id: str, year: str, fingerprint: str, note: str = "") -> None:
+    reg_path = "fin_platform/anomaly_exemptions.json"
+    registry = _load_anomaly_registry(reg_path)
+    c = registry.setdefault("companies", {}).setdefault(company_id, {})
+    roe = c.setdefault("roe_gap", {})
+    roe[year] = {
+        "approved": True,
+        "fingerprint": fingerprint,
+        "note": note or "Approved from Debug UI",
+    }
+    _save_anomaly_registry(reg_path, registry)
+
+
 def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_name):
     """Debug/diagnostics tab."""
     st.markdown("### 🐛 Diagnostics & Debug")
@@ -2434,6 +2471,28 @@ def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_n
             st.markdown("**⚠️ Ratio Warnings (Numerical Stability)**")
             for w in diag.ratio_warnings:
                 st.warning(f"{_yl(w['year'])}: {w['warning']}")
+
+        # Anomaly workflow
+        if getattr(diag, "approved_anomalies", None):
+            st.markdown("**✅ Approved / Auto-Reconciled ROE Anomalies**")
+            st.dataframe(pd.DataFrame(diag.approved_anomalies), width='stretch', hide_index=True)
+
+        if getattr(diag, "unapproved_anomalies", None):
+            st.markdown("**🟠 Unapproved ROE Anomalies (Action Required)**")
+            st.caption("Approve validated anomalies directly from UI; approval is fingerprint-bound and auto-revoked on raw-data changes.")
+            for idx, a in enumerate(diag.unapproved_anomalies):
+                year = a.get("year", "")
+                gap = a.get("gap")
+                fp = a.get("fingerprint", "")
+                cols = st.columns([4, 2])
+                with cols[0]:
+                    st.markdown(f"• **{_yl(year)}** gap={gap:.3f}%" if isinstance(gap, (int, float)) else f"• **{_yl(year)}**")
+                with cols[1]:
+                    if st.button(f"Approve {_yl(year)}", key=f"approve_anom_{idx}_{year}"):
+                        company_id = (company_name or "default_company").strip().lower().replace(" ", "_")
+                        _approve_unapproved_anomaly(company_id=company_id, year=year, fingerprint=fp)
+                        st.success(f"Approved anomaly for {_yl(year)}. Re-running analysis...")
+                        st.rerun()
 
         # Assumptions
         if diag.assumptions:
@@ -2779,6 +2838,7 @@ elif st.session_state["step"] == "dashboard":
 
     @st.cache_data(ttl=60)
     def _run_pn(_data_key: str, _map_key: str, r: float, g: float, n: int, meth: str, strict: bool, mode: str, sector: str):
+        company_id = (company_name or "default_company").strip().lower().replace(" ", "_")
         return penman_nissim_analysis(data, mappings, PNOptions(
             strict_mode=strict,
             classification_mode=mode,  # type: ignore
@@ -2787,6 +2847,7 @@ elif st.session_state["step"] == "dashboard":
             forecast_years=n,
             forecast_method=meth,  # type: ignore
             sector=sector,
+            company_id=company_id,
         ))
 
     @st.cache_data(ttl=60)

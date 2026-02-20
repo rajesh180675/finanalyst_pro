@@ -672,6 +672,16 @@ class TestMatchMetric:
             f"'Total Assets' row must win the Total Assets slot, but got '{ta_src}'"
         )
 
+    def test_over_specific_building_subline_not_mapped_to_fixed_assets(self):
+        sources = [
+            "BalanceSheet::Lab and R & D Equipment - Buildings Net",
+            "BalanceSheet::Buildings - Net",
+            "BalanceSheet::Fixed Assets",
+        ]
+        mappings, _ = auto_map_metrics(sources)
+        assert mappings.get("BalanceSheet::Fixed Assets") == "Fixed Assets"
+        assert mappings.get("BalanceSheet::Lab and R & D Equipment - Buildings Net") != "Fixed Assets"
+
     def test_capex_fallback_skips_zero_header_returns_subline(self, sample_data, sample_mappings):
         """When Capital Expenditure header row is zero, fallback to Purchased of Fixed Assets."""
         import copy

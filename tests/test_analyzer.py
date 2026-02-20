@@ -10,6 +10,7 @@ Run:  pytest tests/ -v
 """
 
 import copy
+import json
 import math
 import sys
 import os
@@ -1288,6 +1289,70 @@ class TestPenmanNissimAnalysis:
             PNOptions(forecast_method="reoi_trend3")
         )
         assert r.valuation is not None
+
+    def test_reconciliation_dead_man_switch_fails(self, sample_data, sample_mappings):
+        broken_data = copy.deepcopy(sample_data)
+        broken_mappings = copy.deepcopy(sample_mappings)
+        broken_data["BalanceSheet::Total Liabilities"] = {
+            "202003": 400000,
+            "202103": 540000,
+            "202203": 660000,
+            "202303": 700000,
+        }
+        broken_mappings["BalanceSheet::Total Liabilities"] = "Total Liabilities"
+        with pytest.raises(ValueError, match="Hard fail: NOA \+ NFA"):
+            penman_nissim_analysis(broken_data, broken_mappings)
+
+    def test_income_statement_reconciliation_tiered_status(self, sample_data, sample_mappings):
+        noisy = copy.deepcopy(sample_data)
+        noisy["ProfitLoss::Profit After Tax"]["202303"] += 0.05
+        r = penman_nissim_analysis(noisy, sample_mappings)
+        row = next((x for x in r.diagnostics.income_statement_checks if x.year == "202303"), None)
+        assert row is not None
+        assert row.status == "warn"
+
+    def test_capex_bug_auto_heuristic_forces_fallback(self, sample_data, sample_mappings):
+        data = copy.deepcopy(sample_data)
+        data["CashFlow::Capital Expenditure"] = {
+            "202003": 0.0, "202103": 0.0, "202203": 0.0, "202303": 0.0
+        }
+        r = penman_nissim_analysis(data, sample_mappings)
+        assert r.diagnostics.capex_heuristic_note is not None
+        assert "auto-detected" in r.diagnostics.capex_heuristic_note.lower()
+
+    def test_anomaly_registry_revokes_on_data_change(self, sample_data, sample_mappings, tmp_path):
+        registry_path = tmp_path / "anomaly_exemptions.json"
+
+        first = copy.deepcopy(sample_data)
+        first["ProfitLoss::Profit After Tax"]["202303"] = 125000
+        opts = PNOptions(anomaly_registry_path=str(registry_path), company_id="co")
+        r1 = penman_nissim_analysis(first, sample_mappings, opts)
+        assert len(r1.diagnostics.unapproved_anomalies) >= 1
+
+        registry = {
+            "version": 1,
+            "companies": {
+                "co": {
+                    "roe_gap": {
+                        "202303": {
+                            "approved": True,
+                            "fingerprint": r1.diagnostics.unapproved_anomalies[0]["fingerprint"],
+                            "note": "validated"
+                        }
+                    }
+                }
+            }
+        }
+        registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+        r2 = penman_nissim_analysis(first, sample_mappings, opts)
+        assert len(r2.diagnostics.approved_anomalies) == 1
+        assert len(r2.diagnostics.unapproved_anomalies) == 0
+
+        changed = copy.deepcopy(first)
+        changed["ProfitLoss::Tax Expense"]["202303"] += 1.0
+        r3 = penman_nissim_analysis(changed, sample_mappings, opts)
+        assert len(r3.diagnostics.unapproved_anomalies) == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

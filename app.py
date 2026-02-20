@@ -2978,8 +2978,16 @@ elif st.session_state["step"] == "dashboard":
                 expanded_segment_files = [(segment_file.name, segment_bytes)]
 
             segment_chunks = []
+            segment_debug_rows = []
             for inner_name, inner_bytes in expanded_segment_files:
                 parsed_seg = parse_segment_finance_file(inner_bytes, inner_name)
+                row_count = 0 if parsed_seg.empty else len(parsed_seg)
+                segment_debug_rows.append({
+                    "file": inner_name,
+                    "bytes": len(inner_bytes),
+                    "rows_parsed": row_count,
+                    "looks_like_html": b"<table" in inner_bytes.lower() or b"<html" in inner_bytes.lower(),
+                })
                 if not parsed_seg.empty:
                     parsed_seg["source_file"] = inner_name
                     segment_chunks.append(parsed_seg)
@@ -2988,6 +2996,14 @@ elif st.session_state["step"] == "dashboard":
 
             if segment_df.empty:
                 st.warning("No Segment Finance data could be parsed from the uploaded file.")
+                with st.expander("Debug details: Segment Finance parse attempt"):
+                    st.markdown(
+                        "- Ensure the archive contains Segment Finance tables (Capitaline export).\n"
+                        "- Supported member formats: `.xls`, `.xlsx`, `.html`, `.htm`, `.csv`.\n"
+                        "- HTML-in-XLS is supported when the file content contains HTML tables."
+                    )
+                    st.caption(f"Top-level upload: `{segment_file.name}` • Expanded files: {len(expanded_segment_files)}")
+                    st.dataframe(pd.DataFrame(segment_debug_rows), width='stretch', hide_index=True)
             else:
                 st.success(f"Parsed segment-finance datapoints: {len(segment_df)}")
 

@@ -20,6 +20,7 @@ Tabs:
 import io
 import json
 import math
+import os
 import zipfile
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
@@ -2123,6 +2124,130 @@ def _build_debug_zip(
     return buffer.getvalue()
 
 
+def _wrap_text_for_pdf(text: str, width: int = 110) -> List[str]:
+    """Wrap plain text for fixed-width PDF rendering."""
+    out: List[str] = []
+    for raw_line in text.splitlines():
+        if not raw_line:
+            out.append("")
+            continue
+        line = raw_line
+        while len(line) > width:
+            out.append(line[:width])
+            line = line[width:]
+        out.append(line)
+    return out
+
+
+def _escape_pdf_text(s: str) -> str:
+    return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _build_simple_text_pdf(title: str, content: str) -> bytes:
+    """Create a pure-Python text PDF (no external dependency)."""
+    lines = [title, "=" * len(title), ""] + _wrap_text_for_pdf(content)
+
+    page_w, page_h = 595, 842  # A4 portrait points
+    font_size = 9
+    line_h = 11
+    margin_x = 32
+    margin_y = 34
+    usable_h = page_h - (2 * margin_y)
+    lines_per_page = max(1, usable_h // line_h)
+
+    chunks = [lines[i:i + lines_per_page] for i in range(0, len(lines), lines_per_page)] or [[""]]
+
+    objects: List[bytes] = []
+
+    # 1: Catalog
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+
+    # 2: Pages (kids filled later)
+    kids_refs = [f"{3 + i * 2} 0 R" for i in range(len(chunks))]
+    pages_obj = f"<< /Type /Pages /Count {len(chunks)} /Kids [{' '.join(kids_refs)}] >>".encode("latin-1")
+    objects.append(pages_obj)
+
+    for i, page_lines in enumerate(chunks):
+        page_obj_num = 3 + i * 2
+        content_obj_num = page_obj_num + 1
+
+        # Page object
+        page_obj = (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_w} {page_h}] "
+            f"/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> "
+            f"/Contents {content_obj_num} 0 R >>"
+        ).encode("latin-1")
+        objects.append(page_obj)
+
+        # Content stream
+        y0 = page_h - margin_y
+        stream_lines = ["BT", f"/F1 {font_size} Tf", f"1 0 0 1 {margin_x} {y0} Tm", f"0 {-line_h} Td"]
+        for ln in page_lines:
+            stream_lines.append(f"({_escape_pdf_text(ln)}) Tj")
+            stream_lines.append(f"0 {-line_h} Td")
+        stream_lines.append("ET")
+        stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
+        content_obj = b"<< /Length " + str(len(stream)).encode("latin-1") + b" >>\nstream\n" + stream + b"\nendstream"
+        objects.append(content_obj)
+
+    # Build final PDF
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for idx, obj in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out.extend(f"{idx} 0 obj\n".encode("latin-1"))
+        out.extend(obj)
+        out.extend(b"\nendobj\n")
+
+    xref_pos = len(out)
+    out.extend(f"xref\n0 {len(objects)+1}\n".encode("latin-1"))
+    out.extend(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        out.extend(f"{off:010d} 00000 n \n".encode("latin-1"))
+
+    trailer = f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF"
+    out.extend(trailer.encode("latin-1"))
+    return bytes(out)
+
+
+def _build_debug_pdf(
+    company_name: str,
+    years: List[str],
+    data: FinancialData,
+    mappings: MappingDict,
+    analysis,
+    pn_result,
+    scoring,
+) -> bytes:
+    """Build a complete plain-text PDF debug audit for LLM/code-review handoff."""
+    manifest = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "company_name": company_name,
+        "years": years,
+        "metric_count": len(data),
+        "mapping_count": len(mappings),
+        "analysis_version": "v9",
+    }
+    sections = {
+        "MANIFEST": manifest,
+        "RAW_DATA": data,
+        "MAPPINGS": mappings,
+        "MAPPING_COVERAGE": get_pattern_coverage(mappings),
+        "MAPPING_DETAILED_MATCHES": get_detailed_matches(sorted(data.keys())),
+        "ANALYSIS_RESULT": _to_jsonable(analysis),
+        "PN_RESULT": _to_jsonable(pn_result),
+        "SCORING_RESULT": _to_jsonable(scoring),
+    }
+    blocks: List[str] = []
+    for name, payload in sections.items():
+        blocks.append(f"\n\n### {name} ###\n")
+        blocks.append(json.dumps(_to_jsonable(payload), indent=2, default=str, ensure_ascii=False))
+
+    full_text = "\n".join(blocks)
+    title = f"FinAnalyst Pro Debug Audit - {company_name or 'Company'}"
+    return _build_simple_text_pdf(title=title, content=full_text)
+
+
 def _build_compact_input_payload(company_name: str, years: List[str], data: FinancialData) -> str:
     """Build a compact payload with labels + values for easy LLM sharing."""
     compact_rows = []
@@ -2139,6 +2264,42 @@ def _build_compact_input_payload(company_name: str, years: List[str], data: Fina
         "metrics": compact_rows,
     }
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+
+
+def _load_anomaly_registry(path: str) -> Dict[str, Any]:
+    if not os.path.exists(path):
+        return {"version": 1, "companies": {}}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+        if not isinstance(obj, dict):
+            return {"version": 1, "companies": {}}
+        obj.setdefault("version", 1)
+        obj.setdefault("companies", {})
+        return obj
+    except Exception:
+        return {"version": 1, "companies": {}}
+
+
+def _save_anomaly_registry(path: str, registry: Dict[str, Any]) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(registry, f, indent=2, sort_keys=True)
+
+
+def _approve_unapproved_anomaly(company_id: str, year: str, fingerprint: str, note: str = "") -> None:
+    reg_path = "fin_platform/anomaly_exemptions.json"
+    registry = _load_anomaly_registry(reg_path)
+    c = registry.setdefault("companies", {}).setdefault(company_id, {})
+    roe = c.setdefault("roe_gap", {})
+    roe[year] = {
+        "approved": True,
+        "fingerprint": fingerprint,
+        "note": note or "Approved from Debug UI",
+    }
+    _save_anomaly_registry(reg_path, registry)
 
 
 def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_name):
@@ -2166,6 +2327,23 @@ def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_n
         file_name=f"{safe_name}_debug_package.zip",
         mime="application/zip",
         help="Contains raw inputs, auto-mapping details, diagnostics, and analysis outputs.",
+    )
+
+    debug_pdf = _build_debug_pdf(
+        company_name=company_name,
+        years=years,
+        data=data,
+        mappings=mappings,
+        analysis=analysis,
+        pn_result=pn_result,
+        scoring=scoring,
+    )
+    st.download_button(
+        "⬇️ Download Complete Debug Audit (PDF)",
+        data=debug_pdf,
+        file_name=f"{safe_name}_debug_audit.pdf",
+        mime="application/pdf",
+        help="Single-file full debug export (Capitaline structure, mappings, diagnostics, and outputs) for LLM audit/review.",
     )
 
     st.markdown("**📋 Compact Input Snapshot (LLM Prompt Copy)**")
@@ -2293,6 +2471,28 @@ def _render_debug(pn_result, analysis, scoring, data, mappings, years, company_n
             st.markdown("**⚠️ Ratio Warnings (Numerical Stability)**")
             for w in diag.ratio_warnings:
                 st.warning(f"{_yl(w['year'])}: {w['warning']}")
+
+        # Anomaly workflow
+        if getattr(diag, "approved_anomalies", None):
+            st.markdown("**✅ Approved / Auto-Reconciled ROE Anomalies**")
+            st.dataframe(pd.DataFrame(diag.approved_anomalies), width='stretch', hide_index=True)
+
+        if getattr(diag, "unapproved_anomalies", None):
+            st.markdown("**🟠 Unapproved ROE Anomalies (Action Required)**")
+            st.caption("Approve validated anomalies directly from UI; approval is fingerprint-bound and auto-revoked on raw-data changes.")
+            for idx, a in enumerate(diag.unapproved_anomalies):
+                year = a.get("year", "")
+                gap = a.get("gap")
+                fp = a.get("fingerprint", "")
+                cols = st.columns([4, 2])
+                with cols[0]:
+                    st.markdown(f"• **{_yl(year)}** gap={gap:.3f}%" if isinstance(gap, (int, float)) else f"• **{_yl(year)}**")
+                with cols[1]:
+                    if st.button(f"Approve {_yl(year)}", key=f"approve_anom_{idx}_{year}"):
+                        company_id = (company_name or "default_company").strip().lower().replace(" ", "_")
+                        _approve_unapproved_anomaly(company_id=company_id, year=year, fingerprint=fp)
+                        st.success(f"Approved anomaly for {_yl(year)}. Re-running analysis...")
+                        st.rerun()
 
         # Assumptions
         if diag.assumptions:
@@ -2638,6 +2838,7 @@ elif st.session_state["step"] == "dashboard":
 
     @st.cache_data(ttl=60)
     def _run_pn(_data_key: str, _map_key: str, r: float, g: float, n: int, meth: str, strict: bool, mode: str, sector: str):
+        company_id = (company_name or "default_company").strip().lower().replace(" ", "_")
         return penman_nissim_analysis(data, mappings, PNOptions(
             strict_mode=strict,
             classification_mode=mode,  # type: ignore
@@ -2646,6 +2847,7 @@ elif st.session_state["step"] == "dashboard":
             forecast_years=n,
             forecast_method=meth,  # type: ignore
             sector=sector,
+            company_id=company_id,
         ))
 
     @st.cache_data(ttl=60)

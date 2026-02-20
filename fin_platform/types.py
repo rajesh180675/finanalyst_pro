@@ -105,7 +105,7 @@ class ReconciliationRow:
     expected: Optional[float]
     actual: Optional[float]
     gap: Optional[float]
-    status: Literal["ok", "warn"]
+    status: Literal["ok", "warn", "fail"]
     note: Optional[str] = None
 
 
@@ -165,6 +165,9 @@ class PNDiagnostics:
     current_components_checks: List[Dict] = field(default_factory=list)
     classification_audit: List[PNClassificationAuditRow] = field(default_factory=list)
     ratio_warnings: List[Dict[str, str]] = field(default_factory=list)
+    approved_anomalies: List[Dict[str, Any]] = field(default_factory=list)
+    unapproved_anomalies: List[Dict[str, Any]] = field(default_factory=list)
+    capex_heuristic_note: Optional[str] = None
 
 
 @dataclass
@@ -635,6 +638,8 @@ class PNOptions:
     forecast_years: int = 5
     forecast_method: ForecastMethod = "reoi_mean3"
     sector: str = "Auto"  # NEW: sector for benchmarks
+    company_id: str = "default_company"
+    anomaly_registry_path: str = "fin_platform/anomaly_exemptions.json"
 
 
 @dataclass

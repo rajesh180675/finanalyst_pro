@@ -610,6 +610,31 @@ STOP_WORDS = frozenset({
     "non-current", "noncurrent", "other", "and", "for", "of", "the",
 })
 
+# ── Deterministic anti-greedy structural guards ─────────────────────────────
+# Capitaline exports deep sub-ledger rows (e.g., "Lab and R & D Equipment - Buildings Net").
+# These must never steal primary aggregate targets such as Fixed Assets/Buildings.
+_AGGREGATE_GUARDED_TARGETS = frozenset({
+    "Fixed Assets",
+    "Property Plant Equipment",
+    "Current Assets",
+    "Non-Current Assets",
+    "Current Liabilities",
+    "Non-Current Liabilities",
+})
+
+_OVER_SPECIFIC_SOURCE_TOKENS = frozenset({
+    "lab", "research", "r d", "r&d", "sidings", "railway", "plantation",
+    "furniture", "fixtures", "vehicles", "computers", "software", "buildings net",
+    "office equipment", "machinery", "electrical", "intangible under development",
+})
+
+_AGGREGATE_SAFE_EXACT = frozenset({
+    "fixed assets", "total fixed assets", "property plant equipment",
+    "property plant and equipment", "current assets", "total current assets",
+    "non current assets", "non-current assets", "current liabilities",
+    "total current liabilities", "non current liabilities", "non-current liabilities",
+})
+
 
 def _tokenize(s: str) -> frozenset:
     tokens = re.split(r'\s+', s)
@@ -640,6 +665,12 @@ def _normalize_text(s: str) -> str:
     s = re.sub(r"[^a-z0-9]+", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def _looks_over_specific_source(src_clean: str) -> bool:
+    if src_clean in _AGGREGATE_SAFE_EXACT:
+        return False
+    return any(tok in src_clean for tok in _OVER_SPECIFIC_SOURCE_TOKENS)
 
 
 # ─── Core Matching ────────────────────────────────────────────────────────────
@@ -818,6 +849,11 @@ def auto_map_metrics(source_metrics: List[str]) -> Tuple[MappingDict, List[str]]
         src_token_count = len(src_label.split()) if src_label else 0
         if src_token_count <= 1 and conf < 0.95:
             continue  # too generic — skip to avoid wrong zero-value mappings
+
+        # Deterministic structural guard against greedy mapping of granular sub-ledger lines
+        # to aggregate balance-sheet targets.
+        if target in _AGGREGATE_GUARDED_TARGETS and _looks_over_specific_source(src_label):
+            continue
 
         if conf >= 0.60:
             mappings[source] = target

@@ -632,20 +632,40 @@ def _parse_segment_finance_frame(df: pd.DataFrame) -> pd.DataFrame:
 
 def parse_segment_finance_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
     """Parse Capitaline Segment Finance exports from html/xls/xlsx/csv (including html-in-xls)."""
+    def _parse_frames_from_bytes(raw_bytes: bytes, source_name: str) -> List[pd.DataFrame]:
+        source_lower = source_name.lower()
+        try:
+            if _looks_like_html(raw_bytes) or source_lower.endswith((".html", ".htm")):
+                html = _decode_text(raw_bytes)
+                return [df for df in pd.read_html(io.StringIO(html), header=None)]
+
+            if source_lower.endswith((".xlsx", ".xls")):
+                xl = pd.ExcelFile(
+                    io.BytesIO(raw_bytes),
+                    engine="openpyxl" if source_lower.endswith(".xlsx") else "xlrd",
+                )
+                return [xl.parse(sheet_name, header=None, dtype=str) for sheet_name in xl.sheet_names]
+
+            if source_lower.endswith(".csv"):
+                return [pd.read_csv(io.BytesIO(raw_bytes), header=None, dtype=str)]
+        except Exception:
+            return []
+        return []
+
     frames: List[pd.DataFrame] = []
     name = filename.lower()
 
-    try:
-        if name.endswith((".html", ".htm")) or (name.endswith(".xls") and _looks_like_html(file_bytes)):
-            html = _decode_text(file_bytes)
-            frames = [df for df in pd.read_html(io.StringIO(html), header=None)]
-        elif name.endswith((".xlsx", ".xls")):
-            xl = pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl" if name.endswith(".xlsx") else "xlrd")
-            frames = [xl.parse(sheet_name, header=None, dtype=str) for sheet_name in xl.sheet_names]
-        elif name.endswith(".csv"):
-            frames = [pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)]
-    except Exception:
-        return pd.DataFrame()
+    if name.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    frames.extend(_parse_frames_from_bytes(zf.read(info), info.filename))
+        except Exception:
+            return pd.DataFrame()
+    else:
+        frames = _parse_frames_from_bytes(file_bytes, filename)
 
     chunks = []
     for frame in frames:

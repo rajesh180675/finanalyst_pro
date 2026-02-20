@@ -25,6 +25,8 @@ from fin_platform.parser import (
     classify_metric,
     parse_file,
     expand_uploaded_files,
+    parse_product_file,
+    parse_segment_finance_file,
 )
 from fin_platform.metric_patterns import (
     match_metric,
@@ -2025,3 +2027,90 @@ class TestNissimProfitabilityAnalysis:
         assert r.nissim_profitability is not None
         # OPM is IS-based, must be computed
         assert len(r.nissim_profitability.operating.opm) > 0
+
+
+class TestProductTableParsing:
+    def test_parse_finished_products_html_xls(self):
+        html = b"""
+        <html><body><table>
+        <tr><td>Products Finished Products VST Industries</td></tr>
+        <tr><td>Year</td><td>Product Name</td><td>Product Code</td><td>Unit of Measurement</td><td>% of STO</td><td>Sales</td></tr>
+        <tr><td>2025</td><td>Cigarettes (Million)</td><td>24022000</td><td>No</td><td>73.66</td><td>1332.92</td></tr>
+        </table></body></html>
+        """
+        parsed = parse_product_file(html, "finished_products.xls")
+        assert not parsed["finished_products"].empty
+        row = parsed["finished_products"].iloc[0]
+        assert int(row["year"]) == 2025
+        assert row["product_name"] == "Cigarettes (Million)"
+        assert row["pct_of_sto"] == pytest.approx(73.66)
+
+    def test_parse_raw_materials_html(self):
+        html = b"""
+        <html><body><table>
+        <tr><td>Products Raw Materials VST Industries</td></tr>
+        <tr><td>Year</td><td>Product Name</td><td>Product Code</td><td>Unit of Measurement</td><td>Product Quantity</td><td>Product Value</td><td>Cost/Unit -Unit Curr.</td></tr>
+        <tr><td>2024</td><td>Raw Material Consumed</td><td>00011028</td><td>NA</td><td>0</td><td>784.16</td><td>0</td></tr>
+        </table></body></html>
+        """
+        parsed = parse_product_file(html, "raw_materials.html")
+        assert not parsed["raw_materials"].empty
+        row = parsed["raw_materials"].iloc[0]
+        assert int(row["year"]) == 2024
+        assert row["product_name"] == "Raw Material Consumed"
+        assert row["product_value"] == pytest.approx(784.16)
+
+
+class TestSegmentFinanceParsing:
+    def test_parse_segment_finance_html_xls_generic_segments(self):
+        html = b"""
+        <html><body><table>
+        <tr><td>Finance Segment Finance (Consolidated)</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>Particulars</td><td>Mar 2025</td><td>Mar 2024</td><td>Mar 2023</td><td>Mar 2022</td></tr>
+        <tr><td>REVENUE</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>Revenue from Operations</td><td>73464.55</td><td>66657.04</td><td>69480.89</td><td>59101.09</td></tr>
+        <tr><td>FMCG - CIGARETTES</td><td>35893.57</td><td>33667.97</td><td>31267.46</td><td>26158.31</td></tr>
+        <tr><td>AGRI BUSINESS</td><td>12244.00</td><td>8523.79</td><td>12361.62</td><td>12192.01</td></tr>
+        <tr><td>RESULT</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>Net Profit</td><td>20091.85</td><td>19910.23</td><td>18753.31</td><td>15057.83</td></tr>
+        <tr><td>FMCG - OTHERS</td><td>1590.23</td><td>1789.91</td><td>1386.49</td><td>934.93</td></tr>
+        </table></body></html>
+        """
+        out = parse_segment_finance_file(html, "segment_finance.xls")
+        assert not out.empty
+        assert set(out.columns) == {"year", "section", "metric", "segment", "value"}
+        # Generic category support (not hardcoded to one company)
+        assert "FMCG - CIGARETTES" in set(out["segment"])
+        assert "AGRI BUSINESS" in set(out["segment"])
+        assert "Revenue from Operations" in set(out["metric"])
+        # Year normalization via extract_year should produce YYYYMM keys
+        assert "202503" in set(out["year"])
+
+
+
+class TestPNStrictReconciliationFallback:
+    def test_strict_mode_raises_on_large_reconciliation_gap(self, sample_data, sample_mappings):
+        data = copy.deepcopy(sample_data)
+        # Force financial liabilities >> total liabilities so NOA + NFA gap becomes huge.
+        data["BalanceSheet::Long Term Borrowings"] = {
+            y: 5_000_000.0 for y in data["BalanceSheet::Long Term Borrowings"].keys()
+        }
+        data["BalanceSheet::Short Term Borrowings"] = {
+            y: 2_000_000.0 for y in data["BalanceSheet::Short Term Borrowings"].keys()
+        }
+        with pytest.raises(ValueError, match="NOA \+ NFA − Equity reconciliation gap"):
+            penman_nissim_analysis(data, sample_mappings, PNOptions(strict_mode=True))
+
+    def test_non_strict_mode_continues_and_records_warning(self, sample_data, sample_mappings):
+        data = copy.deepcopy(sample_data)
+        data["BalanceSheet::Long Term Borrowings"] = {
+            y: 5_000_000.0 for y in data["BalanceSheet::Long Term Borrowings"].keys()
+        }
+        data["BalanceSheet::Short Term Borrowings"] = {
+            y: 2_000_000.0 for y in data["BalanceSheet::Short Term Borrowings"].keys()
+        }
+        result = penman_nissim_analysis(data, sample_mappings, PNOptions(strict_mode=False))
+        assert result is not None
+        assert result.diagnostics is not None
+        warnings = result.diagnostics.ratio_warnings
+        assert any("NOA + NFA" in w.get("metric", "") for w in warnings)

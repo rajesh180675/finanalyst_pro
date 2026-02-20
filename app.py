@@ -2858,16 +2858,36 @@ elif st.session_state["step"] == "dashboard":
     _map_key = str(sorted(mappings.items()))
 
     analysis = _run_analysis(_data_key, _map_key)
-    pn_result = _run_pn(
-        _data_key, _map_key,
-        st.session_state["pn_cost_of_capital"],
-        st.session_state["pn_terminal_growth"],
-        st.session_state["pn_forecast_years"],
-        st.session_state["pn_forecast_method"],
-        st.session_state["pn_strict_mode"],
-        st.session_state["pn_classification_mode"],
-        st.session_state["pn_sector"],
-    )
+    pn_warning = None
+    try:
+        pn_result = _run_pn(
+            _data_key, _map_key,
+            st.session_state["pn_cost_of_capital"],
+            st.session_state["pn_terminal_growth"],
+            st.session_state["pn_forecast_years"],
+            st.session_state["pn_forecast_method"],
+            st.session_state["pn_strict_mode"],
+            st.session_state["pn_classification_mode"],
+            st.session_state["pn_sector"],
+        )
+    except Exception as e:
+        if st.session_state.get("pn_strict_mode", True):
+            pn_result = _run_pn(
+                _data_key, _map_key,
+                st.session_state["pn_cost_of_capital"],
+                st.session_state["pn_terminal_growth"],
+                st.session_state["pn_forecast_years"],
+                st.session_state["pn_forecast_method"],
+                False,
+                st.session_state["pn_classification_mode"],
+                st.session_state["pn_sector"],
+            )
+            pn_warning = (
+                "⚠️ Penman-Nissim strict mode failed and fallback mode was used automatically. "
+                f"Reason: {e}"
+            )
+        else:
+            raise
     scoring = _run_scoring(_data_key, _map_key)
 
     # ── Company header ────────────────────────────────────────────────────────
@@ -2877,6 +2897,9 @@ elif st.session_state["step"] == "dashboard":
     col_h3.metric("Years", f"{analysis.summary.years_covered} ({analysis.summary.year_range})")
     col_h4.metric("Data Quality", f"{analysis.summary.completeness:.0f}%")
     col_h5.metric("Mapped", len(mappings))
+
+    if pn_warning:
+        st.warning(pn_warning)
 
     st.markdown("---")
 

@@ -539,6 +539,128 @@ def parse_product_file(file_bytes: bytes, filename: str) -> Dict[str, pd.DataFra
     return out
 
 
+# ─── Segment Finance Parser ──────────────────────────────────────────────────
+
+SEGMENT_SECTION_TOKENS = {
+    "REVENUE", "RESULT", "OTHER INFORMATION", "OTHER INFO", "OTHERS"
+}
+
+
+def _parse_segment_finance_frame(df: pd.DataFrame) -> pd.DataFrame:
+    raw = df.fillna("").astype(str)
+
+    best_row = None
+    best_year_cols: List[Tuple[int, str]] = []
+    for i in range(min(40, len(raw))):
+        row = [str(x).strip() for x in raw.iloc[i].tolist()]
+        year_cols = []
+        for j, c in enumerate(row):
+            yr = extract_year(c)
+            if yr:
+                year_cols.append((j, yr))
+        if len(year_cols) > len(best_year_cols):
+            best_year_cols = year_cols
+            best_row = i
+
+    if best_row is None or len(best_year_cols) < 3:
+        return pd.DataFrame()
+
+    header = [str(x).strip() for x in raw.iloc[best_row].tolist()]
+    non_year_cols = [j for j in range(len(header)) if j not in {idx for idx, _ in best_year_cols}]
+    label_col = non_year_cols[0] if non_year_cols else 0
+    segment_col = non_year_cols[1] if len(non_year_cols) > 1 else None
+
+    records = []
+    current_section = "General"
+    current_metric = "Unknown"
+
+    for i in range(best_row + 1, len(raw)):
+        row = raw.iloc[i].tolist()
+        label = normalize_metric_name(row[label_col] if label_col < len(row) else "")
+        if not label:
+            continue
+        label_up = label.upper()
+
+        year_values = {}
+        numeric_count = 0
+        for cidx, year in best_year_cols:
+            if cidx >= len(row):
+                continue
+            num = to_numeric(row[cidx])
+            if num is not None:
+                year_values[year] = num
+                numeric_count += 1
+
+        if numeric_count == 0 and label_up in SEGMENT_SECTION_TOKENS:
+            current_section = label.title()
+            continue
+
+        if label.lower() in {"detailed", "segment product", "consolidated", "segment"}:
+            continue
+
+        row_segment = ""
+        if segment_col is not None and segment_col < len(row):
+            row_segment = normalize_metric_name(row[segment_col])
+
+        if numeric_count > 0:
+            is_segment_like = label_up == label and any(ch.isalpha() for ch in label)
+            if is_segment_like and current_metric not in {"Unknown", ""}:
+                metric_name = current_metric
+                segment_name = label
+            else:
+                metric_name = label
+                segment_name = row_segment or "Total"
+                current_metric = metric_name
+
+            for y, v in year_values.items():
+                records.append({
+                    "year": y,
+                    "section": current_section,
+                    "metric": metric_name,
+                    "segment": segment_name,
+                    "value": v,
+                })
+
+    if not records:
+        return pd.DataFrame()
+
+    out = pd.DataFrame(records)
+    out = out.drop_duplicates(subset=["year", "section", "metric", "segment"], keep="first")
+    out = out.sort_values(["section", "metric", "segment", "year"]).reset_index(drop=True)
+    return out
+
+
+def parse_segment_finance_file(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Parse Capitaline Segment Finance exports from html/xls/xlsx/csv (including html-in-xls)."""
+    frames: List[pd.DataFrame] = []
+    name = filename.lower()
+
+    try:
+        if name.endswith((".html", ".htm")) or (name.endswith(".xls") and _looks_like_html(file_bytes)):
+            html = _decode_text(file_bytes)
+            frames = [df for df in pd.read_html(io.StringIO(html), header=None)]
+        elif name.endswith((".xlsx", ".xls")):
+            xl = pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl" if name.endswith(".xlsx") else "xlrd")
+            frames = [xl.parse(sheet_name, header=None, dtype=str) for sheet_name in xl.sheet_names]
+        elif name.endswith(".csv"):
+            frames = [pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)]
+    except Exception:
+        return pd.DataFrame()
+
+    chunks = []
+    for frame in frames:
+        parsed = _parse_segment_finance_frame(frame)
+        if not parsed.empty:
+            chunks.append(parsed)
+
+    if not chunks:
+        return pd.DataFrame()
+
+    out = pd.concat(chunks, ignore_index=True)
+    out = out.drop_duplicates(subset=["year", "section", "metric", "segment"], keep="first")
+    return out.sort_values(["section", "metric", "segment", "year"]).reset_index(drop=True)
+
+
 # ─── Merge Multiple Files ────────────────────────────────────────────────────
 
 def merge_financial_data(

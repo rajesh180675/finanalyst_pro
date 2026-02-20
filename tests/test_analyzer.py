@@ -26,6 +26,7 @@ from fin_platform.parser import (
     parse_file,
     expand_uploaded_files,
     parse_product_file,
+    parse_segment_finance_file,
 )
 from fin_platform.metric_patterns import (
     match_metric,
@@ -2058,3 +2059,30 @@ class TestProductTableParsing:
         assert int(row["year"]) == 2024
         assert row["product_name"] == "Raw Material Consumed"
         assert row["product_value"] == pytest.approx(784.16)
+
+
+class TestSegmentFinanceParsing:
+    def test_parse_segment_finance_html_xls_generic_segments(self):
+        html = b"""
+        <html><body><table>
+        <tr><td>Finance Segment Finance (Consolidated)</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>Particulars</td><td>Mar 2025</td><td>Mar 2024</td><td>Mar 2023</td><td>Mar 2022</td></tr>
+        <tr><td>REVENUE</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>Revenue from Operations</td><td>73464.55</td><td>66657.04</td><td>69480.89</td><td>59101.09</td></tr>
+        <tr><td>FMCG - CIGARETTES</td><td>35893.57</td><td>33667.97</td><td>31267.46</td><td>26158.31</td></tr>
+        <tr><td>AGRI BUSINESS</td><td>12244.00</td><td>8523.79</td><td>12361.62</td><td>12192.01</td></tr>
+        <tr><td>RESULT</td><td></td><td></td><td></td><td></td></tr>
+        <tr><td>Net Profit</td><td>20091.85</td><td>19910.23</td><td>18753.31</td><td>15057.83</td></tr>
+        <tr><td>FMCG - OTHERS</td><td>1590.23</td><td>1789.91</td><td>1386.49</td><td>934.93</td></tr>
+        </table></body></html>
+        """
+        out = parse_segment_finance_file(html, "segment_finance.xls")
+        assert not out.empty
+        assert set(out.columns) == {"year", "section", "metric", "segment", "value"}
+        # Generic category support (not hardcoded to one company)
+        assert "FMCG - CIGARETTES" in set(out["segment"])
+        assert "AGRI BUSINESS" in set(out["segment"])
+        assert "Revenue from Operations" in set(out["metric"])
+        # Year normalization via extract_year should produce YYYYMM keys
+        assert "202503" in set(out["year"])
+

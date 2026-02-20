@@ -35,7 +35,7 @@ import streamlit.components.v1 as components
 from fin_platform.types import (
     FinancialData, MappingDict, PNOptions,
 )
-from fin_platform.parser import parse_file, merge_financial_data, expand_uploaded_files, parse_product_file
+from fin_platform.parser import parse_file, merge_financial_data, expand_uploaded_files, parse_product_file, parse_segment_finance_file
 from fin_platform.metric_patterns import (
     auto_map_metrics, get_all_targets, get_pattern_coverage,
     get_detailed_matches, get_targets_by_statement,
@@ -2884,7 +2884,7 @@ elif st.session_state["step"] == "dashboard":
     tabs = st.tabs([
         "🏠 Overview", "🐛 Debug", "📐 Penman-Nissim", "🧩 Capitaline Ind AS", "📊 Ratios", "📈 Trends",
         "🛡️ Scoring", "💰 Valuation", "💵 FCF & Value Drivers",
-        "📋 Earnings Quality", "🗺️ Mappings", "🔍 Data Explorer", "📦 Products"
+        "📋 Earnings Quality", "🗺️ Mappings", "🔍 Data Explorer", "📦 Products", "🧠 Segment Finance"
     ])
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -2932,6 +2932,75 @@ elif st.session_state["step"] == "dashboard":
             if not raw_df.empty:
                 st.success(f"Raw Materials parsed: {len(raw_df)} rows")
                 st.dataframe(raw_df, width='stretch', hide_index=True)
+
+
+    with tabs[13]:
+        st.markdown("### 🧠 Segment Finance")
+        st.caption("Upload Capitaline Segment Finance ZIP/XLS/HTML files (including HTML-in-XLS). The parser auto-detects segment categories for any company.")
+
+        segment_file = st.file_uploader(
+            "Upload segment finance file",
+            type=["zip", "xls", "xlsx", "html", "htm", "csv"],
+            key="segment_finance_uploader",
+        )
+
+        if segment_file is not None:
+            segment_bytes = segment_file.read()
+            expanded_segment_files = expand_uploaded_files(segment_bytes, segment_file.name)
+            if not expanded_segment_files:
+                expanded_segment_files = [(segment_file.name, segment_bytes)]
+
+            segment_chunks = []
+            for inner_name, inner_bytes in expanded_segment_files:
+                parsed_seg = parse_segment_finance_file(inner_bytes, inner_name)
+                if not parsed_seg.empty:
+                    parsed_seg["source_file"] = inner_name
+                    segment_chunks.append(parsed_seg)
+
+            segment_df = pd.concat(segment_chunks, ignore_index=True) if segment_chunks else pd.DataFrame()
+
+            if segment_df.empty:
+                st.warning("No Segment Finance data could be parsed from the uploaded file.")
+            else:
+                st.success(f"Parsed segment-finance datapoints: {len(segment_df)}")
+
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    section_opts = sorted(segment_df["section"].dropna().unique().tolist())
+                    selected_section = st.selectbox("Section", section_opts, index=0)
+                with col_b:
+                    metric_opts = sorted(segment_df[segment_df["section"] == selected_section]["metric"].dropna().unique().tolist())
+                    selected_metric = st.selectbox("Metric", metric_opts, index=0)
+                with col_c:
+                    segment_opts = sorted(segment_df[(segment_df["section"] == selected_section) & (segment_df["metric"] == selected_metric)]["segment"].dropna().unique().tolist())
+                    selected_segments = st.multiselect("Segments", segment_opts, default=segment_opts[: min(6, len(segment_opts))])
+
+                viz_df = segment_df[(segment_df["section"] == selected_section) & (segment_df["metric"] == selected_metric)].copy()
+                if selected_segments:
+                    viz_df = viz_df[viz_df["segment"].isin(selected_segments)]
+
+                viz_df["year_num"] = pd.to_numeric(viz_df["year"].astype(str).str[:4], errors="coerce")
+                viz_df = viz_df.sort_values(["year_num", "segment"]) 
+
+                if not viz_df.empty:
+                    fig = px.line(
+                        viz_df,
+                        x="year_num",
+                        y="value",
+                        color="segment",
+                        markers=True,
+                        title=f"{selected_section} • {selected_metric}",
+                    )
+                    fig.update_layout(height=420, xaxis_title="Year", yaxis_title="Value")
+                    st.plotly_chart(fig, width='stretch')
+
+                    latest_year = viz_df["year_num"].dropna().max()
+                    latest_df = viz_df[viz_df["year_num"] == latest_year].sort_values("value", ascending=False)
+                    st.markdown(f"**Latest year snapshot ({int(latest_year) if pd.notna(latest_year) else 'N/A'})**")
+                    st.dataframe(latest_df[["segment", "value", "source_file"]], width='stretch', hide_index=True)
+
+                with st.expander("View parsed long-form data"):
+                    st.dataframe(segment_df[["year", "section", "metric", "segment", "value", "source_file"]], width='stretch', hide_index=True)
 
     # ──────────────────────────────────────────────────────────────────────────
     # TAB 2: DEBUG

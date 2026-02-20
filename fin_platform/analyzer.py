@@ -1257,12 +1257,21 @@ def penman_nissim_analysis(
     fix_suggestions: List[str] = []
     latest_year = years[-1] if years else ""
 
-    # Dead-man switch: NOA + NFA must reconcile to Equity within hard absolute bound.
+    # Dead-man switch: in strict mode NOA + NFA must reconcile to Equity.
     if max_noa_recon_gap > 0.01:
-        raise ValueError(
-            "Hard fail: NOA + NFA − Equity reconciliation gap exceeded 0.01 crore "
-            f"(max observed {max_noa_recon_gap:.4f})."
-        )
+        if strict_mode:
+            raise ValueError(
+                "Hard fail: NOA + NFA − Equity reconciliation gap exceeded 0.01 crore "
+                f"(max observed {max_noa_recon_gap:.4f})."
+            )
+        ratio_warnings.append({
+            "year": latest_year or "unknown",
+            "metric": "NOA + NFA − Equity Gap",
+            "message": (
+                "Strict reconciliation breached but analysis continued in non-strict mode "
+                f"(max gap {max_noa_recon_gap:.4f})."
+            ),
+        })
 
     # ROE anomaly registry (validated exemptions with automatic revocation on data change)
     registry = _load_anomaly_registry(anomaly_registry_path)

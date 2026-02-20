@@ -2086,3 +2086,31 @@ class TestSegmentFinanceParsing:
         # Year normalization via extract_year should produce YYYYMM keys
         assert "202503" in set(out["year"])
 
+
+
+class TestPNStrictReconciliationFallback:
+    def test_strict_mode_raises_on_large_reconciliation_gap(self, sample_data, sample_mappings):
+        data = copy.deepcopy(sample_data)
+        # Force financial liabilities >> total liabilities so NOA + NFA gap becomes huge.
+        data["BalanceSheet::Long Term Borrowings"] = {
+            y: 5_000_000.0 for y in data["BalanceSheet::Long Term Borrowings"].keys()
+        }
+        data["BalanceSheet::Short Term Borrowings"] = {
+            y: 2_000_000.0 for y in data["BalanceSheet::Short Term Borrowings"].keys()
+        }
+        with pytest.raises(ValueError, match="NOA \+ NFA − Equity reconciliation gap"):
+            penman_nissim_analysis(data, sample_mappings, PNOptions(strict_mode=True))
+
+    def test_non_strict_mode_continues_and_records_warning(self, sample_data, sample_mappings):
+        data = copy.deepcopy(sample_data)
+        data["BalanceSheet::Long Term Borrowings"] = {
+            y: 5_000_000.0 for y in data["BalanceSheet::Long Term Borrowings"].keys()
+        }
+        data["BalanceSheet::Short Term Borrowings"] = {
+            y: 2_000_000.0 for y in data["BalanceSheet::Short Term Borrowings"].keys()
+        }
+        result = penman_nissim_analysis(data, sample_mappings, PNOptions(strict_mode=False))
+        assert result is not None
+        assert result.diagnostics is not None
+        warnings = result.diagnostics.ratio_warnings
+        assert any("NOA + NFA" in w.get("metric", "") for w in warnings)

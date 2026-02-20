@@ -2977,6 +2977,15 @@ elif st.session_state["step"] == "dashboard":
             if not expanded_segment_files:
                 expanded_segment_files = [(segment_file.name, segment_bytes)]
 
+            def _arrow_safe_preview(df: pd.DataFrame) -> pd.DataFrame:
+                if df is None or df.empty:
+                    return pd.DataFrame()
+                out = df.copy()
+                out.columns = [" ".join(str(part) for part in c if str(part) != "") if isinstance(c, tuple) else str(c) for c in out.columns]
+                out = out.reset_index(drop=True)
+                out = out.where(pd.notna(out), "")
+                return out.applymap(lambda v: "" if v is None else str(v))
+
             def _segment_raw_preview(file_name: str, file_bytes: bytes) -> tuple[pd.DataFrame, Optional[str]]:
                 low = file_name.lower()
                 looks_like_html = b"<table" in file_bytes.lower() or b"<html" in file_bytes.lower()
@@ -2984,16 +2993,16 @@ elif st.session_state["step"] == "dashboard":
                     if looks_like_html or low.endswith((".html", ".htm")):
                         html = file_bytes.decode("utf-8", errors="ignore")
                         frames = pd.read_html(io.StringIO(html), header=None)
-                        return (frames[0].head(5).fillna(""), None) if frames else (pd.DataFrame(), "No HTML table found")
+                        return (_arrow_safe_preview(frames[0].head(5)), None) if frames else (pd.DataFrame(), "No HTML table found")
                     if low.endswith((".xlsx", ".xls")):
                         xl = pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl" if low.endswith(".xlsx") else "xlrd")
                         if not xl.sheet_names:
                             return pd.DataFrame(), "No sheets found"
                         first = xl.parse(xl.sheet_names[0], header=None, dtype=str)
-                        return first.head(5).fillna(""), None
+                        return _arrow_safe_preview(first.head(5)), None
                     if low.endswith(".csv"):
                         df = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)
-                        return df.head(5).fillna(""), None
+                        return _arrow_safe_preview(df.head(5)), None
                     return pd.DataFrame(), "Unsupported file extension"
                 except Exception as exc:
                     return pd.DataFrame(), f"Preview parse failed: {exc}"
